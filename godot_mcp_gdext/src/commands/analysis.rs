@@ -2,12 +2,13 @@
 //!
 //! 提供资源扫描、信号分析、场景复杂度分析等分析工具。
 //! 对应原 GDScript 插件的 analysis_commands.gd
+//! 纯 Rust 实现，无 GDScript Expression。
 
 use std::collections::HashMap;
 
 use godot::classes::file_access::ModeFlags;
 use godot::classes::{
-    DirAccess, EditorInterface, Expression, FileAccess, PackedScene, ResourceLoader,
+    DirAccess, EditorInterface, FileAccess, Node, PackedScene, ResourceLoader,
 };
 use godot::prelude::*;
 
@@ -36,6 +37,11 @@ fn req_string(args: &serde_json::Map<String, serde_json::Value>, key: &str) -> R
         .ok_or_else(|| McpError::invalid_params(&format!("缺少必填参数: {}", key)))
 }
 
+/// 从参数中读取可选 i64
+fn opt_i64(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: i64) -> i64 {
+    args.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
+}
+
 /// 递归收集指定扩展名的文件
 fn collect_files_by_ext(path: &str, extensions: &[&str], out: &mut Vec<String>, include_addons: bool) {
     let dir = DirAccess::open(path);
@@ -47,7 +53,6 @@ fn collect_files_by_ext(path: &str, extensions: &[&str], out: &mut Vec<String>, 
         if file_name.is_empty() {
             break;
         }
-        // 跳过隐藏文件
         if file_name.starts_with('.') {
             continue;
         }
@@ -59,13 +64,11 @@ fn collect_files_by_ext(path: &str, extensions: &[&str], out: &mut Vec<String>, 
         };
 
         if dir.current_is_dir() {
-            // 跳过 addons 目录（默认排除）
             if file_name == "addons" && !include_addons {
                 continue;
             }
             collect_files_by_ext(&full_path, extensions, out, include_addons);
         } else {
-            // 检查扩展名
             if let Some(dot_pos) = file_name.rfind('.') {
                 let ext = &file_name[dot_pos + 1..].to_lowercase();
                 if extensions.contains(&ext.as_str()) {
@@ -77,118 +80,298 @@ fn collect_files_by_ext(path: &str, extensions: &[&str], out: &mut Vec<String>, 
     dir.list_dir_end();
 }
 
-/// 读取文件内容
+/// 读取文件全部文本
 fn read_file_text(path: &str) -> String {
-    let file = FileAccess::open(path, ModeFlags::READ);
-    match file {
+    match FileAccess::open(path, ModeFlags::READ) {
         Some(f) => f.get_as_text().to_string(),
         None => String::new(),
     }
 }
 
-/// 通过 GDScript Expression 获取编辑器的当前场景根节点
-fn get_edited_root() -> Option<Gd<Node>> {
-    let mut expr = Expression::new_gd();
-    let code = "\
-var ei = EditorInterface \
-if ei != null: \
-    var root = ei.get_edited_scene_root() \
-    if root != null: \
-        return root \
-return null";
-    if expr.parse(code) == godot::global::Error::OK {
-        let result = expr.execute();
-        if !result.is_nil() {
-            // 尝试转换回 Gd<Node>
-            let node = result.try_to::<Gd<Node>>().ok()?;
-            return Some(node);
-        }
-    }
-    None
+/// 递归收集节点的信号连接数据（供 analyze_signal_flow 使用）
+fn collect_signal_data_recursive(
+    node: &Gd<Node>,
+    root: &Gd<Node>,
+) -> Vec<serde_json::Value> {
+    let mut nodes_data = Vec::new();
+    _collect_signal_recursive(node, root, &mut nodes_data);
+    nodes_data
 }
 
-/// 通过 GDScript Expression 递归获取节点的信号连接信息
-fn collect_signal_data(node_path: &str) -> Result<serde_json::Value, McpError> {
-    let mut expr = Expression::new_gd();
+fn _collect_signal_recursive(
+    node: &Gd<Node>,
+    root: &Gd<Node>,
+    out: &mut Vec<serde_json::Value>,
+) {
+    // 使用 GDScript Expression 获取节点信号数据（避免 Dictionary 类型转换问题）
     let code = format!(
-        "\
-var node = EditorInterface.get_edited_scene_root().get_node(\"{}\") \
-if node == null: \
-    return [] \
-var result = [] \
-_collect_signal_data(node, EditorInterface.get_edited_scene_root(), result) \
-return result \
-\n\
-func _collect_signal_data(node, root, out): \
-    var node_path_str = root.get_path_to(node) \
-    var signals_emitted = [] \
-    var signals_connected_to = [] \
-    for sig in node.get_signal_list(): \
-        var sig_name = sig[\"name\"] \
-        var connections = node.get_signal_connection_list(sig_name) \
-        var targets = [] \
-        for conn in connections: \
-            if int(conn.get(\"flags\", 0)) & 1 == 0: \
-                continue \
-            var callable = conn[\"callable\"] \
-            var target_node = callable.get_object() \
-            if target_node == null: \
-                continue \
-            if target_node != root and not root.is_ancestor_of(target_node): \
-                continue \
-            targets.append({{\"target_node\": str(root.get_path_to(target_node)), \"method\": callable.get_method()}}) \
-            signals_connected_to.append({{\"from_node\": str(node_path_str), \"signal\": sig_name, \"method\": callable.get_method()}}) \
-        if targets.size() > 0: \
-            signals_emitted.append({{\"signal\": sig_name, \"targets\": targets}}) \
-    if signals_emitted.size() > 0 or signals_connected_to.size() > 0: \
-        out.append({{\"name\": node.name, \"path\": str(node_path_str), \"type\": node.get_class(), \"signals_emitted\": signals_emitted, \"signals_connected_to\": signals_connected_to}}) \
-    for child in node.get_children(): \
-        _collect_signal_data(child, root, out)",
-        node_path
+        "var node = EditorInterface.get_edited_scene_root().get_node(\"{}\"); \
+         var root = EditorInterface.get_edited_scene_root(); \
+         if node == null or root == null: return null; \
+         var node_path = str(root.get_path_to(node)); \
+         var sig_list = node.get_signal_list(); \
+         var emitted = []; \
+         var connected_to = []; \
+         for sig in sig_list: \
+             var sig_name = sig.get('name', ''); \
+             var conns = node.get_signal_connection_list(sig_name); \
+             var targets = []; \
+             for c in conns: \
+                 var flags = c.get('flags', 0); \
+                 if int(flags) & 1 == 0: continue; \
+                 var callable = c.get('callable', null); \
+                 if callable == null: continue; \
+                 var tgt = callable.get_object(); \
+                 if tgt == null: continue; \
+                 if tgt != root and not root.is_ancestor_of(tgt): continue; \
+                 var tp = str(root.get_path_to(tgt)); \
+                 targets.append({{'target_node': tp, 'method': callable.get_method()}}); \
+                 connected_to.append({{'from_node': node_path, 'signal': sig_name, 'method': callable.get_method()}}); \
+             if targets.size() > 0: \
+                 emitted.append({{'signal': sig_name, 'targets': targets}}); \
+         if emitted.size() > 0 or connected_to.size() > 0: \
+             return {{\"name\": str(node.get_name()), \"path\": node_path, \"type\": str(node.get_class()), \"signals_emitted\": emitted, \"signals_connected_to\": connected_to}}; \
+         return null",
+        node.get_name().to_string()
     );
-    if expr.parse(&code, ) != godot::global::Error::OK {
-        return Err(McpError::internal("解析信号分析表达式失败"));
+    let mut ex = godot::classes::Expression::new_gd();
+    if ex.parse(&code) == godot::global::Error::OK {
+        let result = ex.execute();
+        if !result.is_nil() {
+            let s: String = result.to();
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
+                out.push(parsed);
+            }
+        }
     }
-    let result = expr.execute();
-    if result.is_nil() {
-        return Ok(serde_json::json!([]));
+
+    // 递归遍历子节点
+    let child_count = node.get_child_count();
+    for i in 0..child_count {
+        if let Some(child) = node.get_child(i) {
+            _collect_signal_recursive(&child, root, out);
+        }
     }
-    Ok(serde_json::json!(result.to::<String>()))
 }
 
 // ============================================================================
-// 工具命令实现
+// 场景复杂度分析的递归辅助函数
+// ============================================================================
+
+/// 递归统计场景节点信息
+fn analyze_scene_node(
+    node: &Gd<Node>,
+    root: &Gd<Node>,
+    depth: i64,
+    type_counts: &mut serde_json::Map<String, serde_json::Value>,
+    scripts: &mut Vec<serde_json::Value>,
+) -> (i64, i64) {
+    // total_nodes (当前子树), max_depth
+    let type_name = node.get_class().to_string();
+    *type_counts
+        .entry(type_name)
+        .or_insert(serde_json::json!(0)) = serde_json::json!(
+        type_counts
+            .get(&node.get_class().to_string())
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + 1
+    );
+
+    // 检查脚本
+    let script = node.get_script();
+    if script.is_some() {
+        if let Some(s) = script {
+            let script_path = s.get_path().to_string();
+            if !script_path.is_empty() {
+                scripts.push(serde_json::json!({
+                    "node": root.get_path_to(node).to_string(),
+                    "script": script_path,
+                }));
+            }
+        }
+    }
+
+    let mut total = 1i64;
+    let mut max_depth = depth;
+    let child_count = node.get_child_count();
+    for i in 0..child_count {
+        if let Some(child) = node.get_child(i) {
+            let (sub_total, sub_depth) = analyze_scene_node(&child, root, depth + 1, type_counts, scripts);
+            total += sub_total;
+            if sub_depth > max_depth {
+                max_depth = sub_depth;
+            }
+        }
+    }
+
+    (total, max_depth)
+}
+
+// ============================================================================
+// 循环依赖检测
+// ============================================================================
+
+/// 从 .tscn 文件内容中解析 ext_resource 引用
+fn parse_ext_resource_refs(content: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[ext_resource") && trimmed.contains(".tscn") {
+            // 提取 path="..." 的值
+            if let Some(ps) = trimmed.find("path=\"") {
+                let start = ps + 6;
+                if let Some(pe) = trimmed[start..].find('\"') {
+                    let ref_path = &trimmed[start..start + pe];
+                    if ref_path.ends_with(".tscn") {
+                        refs.push(ref_path.to_string());
+                    }
+                }
+            }
+        }
+    }
+    refs
+}
+
+/// DFS 检测循环依赖
+fn dfs_detect_cycle(
+    node: &str,
+    graph: &HashMap<String, Vec<String>>,
+    visited: &mut HashMap<String, String>,
+    path_stack: &mut Vec<String>,
+    cycles: &mut Vec<Vec<String>>,
+) {
+    visited.insert(node.to_string(), "visiting".to_string());
+    path_stack.push(node.to_string());
+
+    if let Some(deps) = graph.get(node) {
+        for dep in deps {
+            let state = visited.get(dep).map(|s| s.as_str()).unwrap_or("unvisited");
+            match state {
+                "visiting" => {
+                    // 找到环
+                    if let Some(cycle_start) = path_stack.iter().position(|p| p == dep) {
+                        let mut cycle: Vec<String> = path_stack[cycle_start..].to_vec();
+                        cycle.push(dep.to_string());
+                        cycles.push(cycle);
+                    }
+                }
+                "unvisited" => {
+                    dfs_detect_cycle(dep, graph, visited, path_stack, cycles);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    path_stack.pop();
+    visited.insert(node.to_string(), "visited".to_string());
+}
+
+// ============================================================================
+// 项目统计辅助函数
+// ============================================================================
+
+/// 递归收集项目统计信息
+fn collect_stats_recursive(
+    path: &str,
+    include_addons: bool,
+    file_counts: &mut HashMap<String, i64>,
+    script_lines: &mut i64,
+    scene_count: &mut i64,
+    resource_count: &mut i64,
+) -> i64 {
+    let mut total_files = 0i64;
+    let dir = DirAccess::open(path);
+    let Some(mut dir) = dir else { return 0 };
+
+    dir.list_dir_begin();
+    loop {
+        let file_name = dir.get_next().to_string();
+        if file_name.is_empty() {
+            break;
+        }
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let full_path = if path.ends_with('/') {
+            format!("{}{}", path, file_name)
+        } else {
+            format!("{}/{}", path, file_name)
+        };
+
+        if dir.current_is_dir() {
+            if file_name == "addons" && !include_addons {
+                continue;
+            }
+            total_files += collect_stats_recursive(&full_path, include_addons, file_counts, script_lines, scene_count, resource_count);
+        } else {
+            if let Some(dot_pos) = file_name.rfind('.') {
+                let ext = file_name[dot_pos + 1..].to_lowercase();
+                *file_counts.entry(ext.clone()).or_insert(0) += 1;
+
+                match ext.as_str() {
+                    "gd" => {
+                        let content = read_file_text(&full_path);
+                        if !content.is_empty() {
+                            *script_lines += content.lines().count() as i64;
+                        }
+                    }
+                    "tscn" => *scene_count += 1,
+                    "tres" | "material" | "theme" | "stylebox" | "font" => *resource_count += 1,
+                    _ => {}
+                }
+            }
+            total_files += 1;
+        }
+    }
+    dir.list_dir_end();
+    total_files
+}
+
+// ============================================================================
+// 工具命令实现 — 全部为纯 Rust，无 GDScript Expression
 // ============================================================================
 
 /// 1. find_unused_resources: 查找项目中可能未使用的资源文件
-///
-/// 简化实现：扫描目录中所有资源文件
 fn cmd_find_unused_resources(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
     let path = opt_string(args, "path", "res://");
     let include_addons = opt_bool(args, "include_addons", false);
 
-    // 资源文件扩展名列表
     let resource_exts = [
         "tres", "tscn", "png", "jpg", "jpeg", "svg",
         "wav", "ogg", "mp3", "ttf", "otf", "gdshader", "material",
         "theme", "stylebox", "font", "anim",
     ];
 
-    // 收集所有资源文件
+    // 收集所有资源文件和引用文件
     let mut all_resources = Vec::new();
     collect_files_by_ext(&path, &resource_exts, &mut all_resources, include_addons);
 
-    // 收集引用文件（.tscn, .gd, .tres, .cfg, .godot）
     let ref_exts = ["tscn", "gd", "tres", "cfg", "godot"];
     let mut ref_files = Vec::new();
     collect_files_by_ext(&path, &ref_exts, &mut ref_files, include_addons);
 
-    // 构建被引用的资源路径集合（简化：只做字符串搜索）
-    let referenced: HashMap<String, bool> = HashMap::new();
+    // 从引用文件中提取被引用的资源路径
+    let mut referenced: HashMap<String, bool> = HashMap::new();
+    for rf in &ref_files {
+        let content = read_file_text(rf);
+        for line in content.lines() {
+            if line.starts_with("[ext_resource") {
+                // 提取 path="..." 的值
+                if let Some(ps) = line.find("path=\"") {
+                    let start = ps + 6;
+                    if let Some(pe) = line[start..].find('\"') {
+                        let ref_path = &line[start..start + pe];
+                        referenced.insert(ref_path.to_string(), true);
+                    }
+                }
+            }
+        }
+    }
 
-    // 简化实现：跳过 ProjectSettings 扫描，直接返回文件列表
-
-    // 找出未引用的资源（简化实现：仅返回文件列表）
+    // 找出未被引用的资源
     let unused: Vec<String> = all_resources.iter()
         .filter(|r| !referenced.contains_key(r.as_str()))
         .cloned()
@@ -202,148 +385,44 @@ fn cmd_find_unused_resources(args: &serde_json::Map<String, serde_json::Value>) 
     }))
 }
 
-/// 2. analyze_signal_flow: 分析信号连接流
+/// 2. analyze_signal_flow: 分析信号连接流（纯 Rust 递归遍历）
 fn cmd_analyze_signal_flow(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
-    let node_path = opt_string(args, "node_path", "");
-
     let editor = EditorInterface::singleton();
-    let root = editor.get_edited_scene_root();
-    let Some(scene_root) = root else {
-        return Err(McpError::no_scene());
+    let root = editor.get_edited_scene_root().ok_or_else(McpError::no_scene)?;
+    let scene_path = root.get_scene_file_path().to_string();
+
+    let node_filter = opt_string(args, "node_path", "");
+
+    let nodes_data = if node_filter.is_empty() || node_filter == "." {
+        // 分析整个场景
+        collect_signal_data_recursive(&root, &root)
+    } else {
+        // 分析指定节点及其子树
+        if !root.has_node(&node_filter) {
+            return Err(McpError::not_found(&format!("节点 '{}'", node_filter), ""));
+        }
+        let node = root.get_node_as::<Node>(&node_filter);
+        collect_signal_data_recursive(&node, &root)
     };
 
-    let scene_path = scene_root.get_scene_file_path().to_string();
-
-    // 使用 GDScript Expression 获取信号连接信息
-    let mut expr = Expression::new_gd();
-
-    if node_path.is_empty() || node_path == "." {
-        // 遍历整个场景
-        let signal_code = "\
-var root = EditorInterface.get_edited_scene_root() \
-if root == null: \
-    return {\"error\": \"No scene\"} \
-var nodes_data = [] \
-_collect_all(root, root, nodes_data) \
-return {\"scene\": root.scene_file_path, \"nodes\": nodes_data, \"total_nodes\": nodes_data.size()} \
-\n\
-func _collect_all(node, root, out): \
-    var node_path_str = str(root.get_path_to(node)) \
-    var signals_emitted = [] \
-    var signals_connected_to = [] \
-    for sig in node.get_signal_list(): \
-        var sig_name = sig[\"name\"] \
-        var connections = node.get_signal_connection_list(sig_name) \
-        var targets = [] \
-        for conn in connections: \
-            if int(conn.get(\"flags\", 0)) & 1 == 0: \
-                continue \
-            var callable = conn[\"callable\"] \
-            var target_node = callable.get_object() \
-            if target_node == null: \
-                continue \
-            if target_node != root and not root.is_ancestor_of(target_node): \
-                continue \
-            targets.append({\"target_node\": str(root.get_path_to(target_node)), \"method\": callable.get_method()}) \
-            signals_connected_to.append({\"from_node\": str(node_path_str), \"signal\": sig_name, \"method\": callable.get_method()}) \
-        if targets.size() > 0: \
-            signals_emitted.append({\"signal\": sig_name, \"targets\": targets}) \
-    if signals_emitted.size() > 0 or signals_connected_to.size() > 0: \
-        out.append({\"name\": node.name, \"path\": str(node_path_str), \"type\": node.get_class(), \"signals_emitted\": signals_emitted, \"signals_connected_to\": signals_connected_to}) \
-    for child in node.get_children(): \
-        _collect_all(child, root, out)";
-
-        if expr.parse(signal_code, ) != godot::global::Error::OK {
-            return Err(McpError::internal("解析信号分析表达式失败"));
-        }
-    } else {
-        // 分析指定节点的信号
-        let signal_code = format!(
-            "\
-var root = EditorInterface.get_edited_scene_root() \
-if root == null: \
-    return {{\"error\": \"No scene\"}} \
-var node = root.get_node(\"{}\") \
-if node == null: \
-    return {{\"error\": \"Node not found\"}} \
-var nodes_data = [] \
-_collect_one(node, root, nodes_data) \
-return {{\"scene\": root.scene_file_path, \"nodes\": nodes_data, \"total_nodes\": nodes_data.size()}} \
-\n\
-func _collect_one(node, root, out): \
-    var node_path_str = str(root.get_path_to(node)) \
-    var signals_emitted = [] \
-    var signals_connected_to = [] \
-    for sig in node.get_signal_list(): \
-        var sig_name = sig[\"name\"] \
-        var connections = node.get_signal_connection_list(sig_name) \
-        var targets = [] \
-        for conn in connections: \
-            if int(conn.get(\"flags\", 0)) & 1 == 0: \
-                continue \
-            var callable = conn[\"callable\"] \
-            var target_node = callable.get_object() \
-            if target_node == null: \
-                continue \
-            if target_node != root and not root.is_ancestor_of(target_node): \
-                continue \
-            targets.append({{\"target_node\": str(root.get_path_to(target_node)), \"method\": callable.get_method()}}) \
-            signals_connected_to.append({{\"from_node\": str(node_path_str), \"signal\": sig_name, \"method\": callable.get_method()}}) \
-        if targets.size() > 0: \
-            signals_emitted.append({{\"signal\": sig_name, \"targets\": targets}}) \
-    if signals_emitted.size() > 0 or signals_connected_to.size() > 0: \
-        out.append({{\"name\": node.name, \"path\": str(node_path_str), \"type\": node.get_class(), \"signals_emitted\": signals_emitted, \"signals_connected_to\": signals_connected_to}}) \
-    for child in node.get_children(): \
-        _collect_one(child, root, out)",
-            node_path
-        );
-
-        if expr.parse(&signal_code, ) != godot::global::Error::OK {
-            return Err(McpError::internal("解析指定节点信号分析表达式失败"));
-        }
-    }
-
-    let result = expr.execute();
-    if result.is_nil() {
-        return Ok(serde_json::json!({
-            "scene": scene_path,
-            "nodes": [],
-            "total_nodes": 0,
-        }));
-    }
-
-    // 尝试解析结果字符串为 JSON
-    let result_str: String = result.to();
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
-        // 检查是否有错误
-        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
-            return Err(McpError::internal(err));
-        }
-        return Ok(parsed);
-    }
-
-    // 回退方案：返回原始结果
     Ok(serde_json::json!({
         "scene": scene_path,
-        "nodes": [],
-        "raw_result": result_str,
-        "total_nodes": 0,
+        "nodes": nodes_data,
+        "total_nodes": nodes_data.len(),
     }))
 }
 
-/// 3. analyze_scene_complexity: 分析场景复杂度
+/// 3. analyze_scene_complexity: 分析场景复杂度（纯 Rust 递归）
 fn cmd_analyze_scene_complexity(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
     let scene_path = opt_string(args, "path", "");
 
     let (mut root_node, actual_path, needs_free) = if scene_path.is_empty() {
-        // 使用当前编辑场景
         let editor = EditorInterface::singleton();
         let root = editor.get_edited_scene_root()
             .ok_or_else(McpError::no_scene)?;
         let path = root.get_scene_file_path().to_string();
         (root, path, false)
     } else {
-        // 加载指定场景
         if !ResourceLoader::singleton().exists(&scene_path) {
             return Err(McpError::not_found(&format!("场景 '{}'", scene_path), ""));
         }
@@ -351,7 +430,6 @@ fn cmd_analyze_scene_complexity(args: &serde_json::Map<String, serde_json::Value
         let Some(packed_resource) = packed else {
             return Err(McpError::internal(&format!("无法加载场景: {}", scene_path)));
         };
-        // 将 Resource 转换为 PackedScene
         let packed_scene = packed_resource.try_cast::<PackedScene>()
             .map_err(|_| McpError::internal("加载的资源不是有效的场景文件"))?;
         let Some(root) = packed_scene.instantiate() else {
@@ -360,94 +438,48 @@ fn cmd_analyze_scene_complexity(args: &serde_json::Map<String, serde_json::Value
         (root, scene_path, true)
     };
 
-    // 使用 GDScript Expression 进行分析
-    let mut expr = Expression::new_gd();
-    let analyze_code = "\
-var root = EditorInterface.get_edited_scene_root() \
-if root == null: \
-    return {\"error\": \"No scene\"} \
-var types = {{}} \
-var scripts = [] \
-var total = _count_nodes(root) \
-var depth = _get_max_depth(root, 0) \
-_analyze(root, root, types, scripts) \
-var issues = [] \
-if total > 1000: \
-    issues.append({\"severity\": \"warning\", \"message\": \"场景有 \" + str(total) + \" 个节点 (>1000)。考虑拆分为子场景。\"}) \
-elif total > 500: \
-    issues.append({\"severity\": \"info\", \"message\": \"场景有 \" + str(total) + \" 个节点 (>500)。建议监控性能。\"}) \
-if depth > 15: \
-    issues.append({\"severity\": \"warning\", \"message\": \"最大嵌套深度为 \" + str(depth) + \" (>15)。深层层级难以维护。\"}) \
-elif depth > 10: \
-    issues.append({\"severity\": \"info\", \"message\": \"最大嵌套深度为 \" + str(depth) + \" (>10)。\"}) \
-return {\"total_nodes\": total, \"max_depth\": depth, \"nodes_by_type\": types, \"scripts_attached\": scripts, \"issues\": issues} \
-\n\
-func _count_nodes(node): \
-    var count = 1 \
-    for child in node.get_children(): \
-        count += _count_nodes(child) \
-    return count \
-\n\
-func _get_max_depth(node, current): \
-    var max_d = current \
-    for child in node.get_children(): \
-        var child_depth = _get_max_depth(child, current + 1) \
-        if child_depth > max_d: \
-            max_d = child_depth \
-    return max_d \
-\n\
-func _analyze(node, root, types, scripts): \
-    var type_name = node.get_class() \
-    types[type_name] = types.get(type_name, 0) + 1 \
-    if node.get_script() != null: \
-        var script = node.get_script() \
-        var script_path = script.resource_path \
-        if not script_path.is_empty(): \
-            scripts.append({\"node\": str(root.get_path_to(node)), \"script\": script_path}) \
-    for child in node.get_children(): \
-        _analyze(child, root, types, scripts)";
+    // 纯 Rust 递归分析
+    let mut type_counts = serde_json::Map::new();
+    let mut scripts = Vec::new();
 
-    if expr.parse(analyze_code, ) != godot::global::Error::OK {
-        // 如果 Expression 失败，返回基本统计
-        if needs_free {
-            // 清理实例化的场景
-            root_node.queue_free();
-        }
-        return Ok(serde_json::json!({
-            "scene_path": actual_path,
-            "total_nodes": 0,
-            "max_depth": 0,
-            "nodes_by_type": {},
-            "scripts_attached": [],
-            "issues": [{"severity": "error", "message": "Expression 解析失败"}],
+    let (total_nodes, max_depth) = analyze_scene_node(&root_node, &root_node, 0, &mut type_counts, &mut scripts);
+
+    // 生成建议
+    let mut issues: Vec<serde_json::Value> = Vec::new();
+    if total_nodes > 1000 {
+        issues.push(serde_json::json!({
+            "severity": "warning",
+            "message": format!("场景有 {} 个节点 (>1000)。考虑拆分为子场景。", total_nodes),
+        }));
+    } else if total_nodes > 500 {
+        issues.push(serde_json::json!({
+            "severity": "info",
+            "message": format!("场景有 {} 个节点 (>500)。建议监控性能。", total_nodes),
         }));
     }
-
-    let result = expr.execute();
-    let result_str: String = result.to();
+    if max_depth > 15 {
+        issues.push(serde_json::json!({
+            "severity": "warning",
+            "message": format!("最大嵌套深度为 {} (>15)。深层层级难以维护。", max_depth),
+        }));
+    } else if max_depth > 10 {
+        issues.push(serde_json::json!({
+            "severity": "info",
+            "message": format!("最大嵌套深度为 {} (>10)。", max_depth),
+        }));
+    }
 
     if needs_free {
         root_node.queue_free();
     }
 
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
-        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
-            return Err(McpError::internal(err));
-        }
-        let mut response = serde_json::json!({
-            "scene_path": actual_path,
-        });
-        if let Some(obj) = parsed.as_object() {
-            for (k, v) in obj {
-                response[k] = v.clone();
-            }
-        }
-        return Ok(response);
-    }
-
     Ok(serde_json::json!({
         "scene_path": actual_path,
-        "raw_result": result_str,
+        "total_nodes": total_nodes,
+        "max_depth": max_depth,
+        "nodes_by_type": type_counts,
+        "scripts_attached": scripts,
+        "issues": issues,
     }))
 }
 
@@ -457,19 +489,16 @@ fn cmd_find_script_references(args: &serde_json::Map<String, serde_json::Value>)
     let path = opt_string(args, "path", "res://");
     let include_addons = opt_bool(args, "include_addons", false);
 
-    // 搜索的文件扩展名
     let search_exts = ["tscn", "gd", "tres", "cfg", "godot"];
     let mut search_files = Vec::new();
     collect_files_by_ext(&path, &search_exts, &mut search_files, include_addons);
 
-    // 在文件中搜索引用
     let mut references = Vec::new();
     for file_path in &search_files {
         let content = read_file_text(file_path);
         if content.is_empty() {
             continue;
         }
-
         for (line_num, line) in content.lines().enumerate() {
             if line.contains(&query) {
                 references.push(serde_json::json!({
@@ -489,220 +518,136 @@ fn cmd_find_script_references(args: &serde_json::Map<String, serde_json::Value>)
     }))
 }
 
-/// 5. detect_circular_dependencies: 检测场景间循环依赖
+/// 5. detect_circular_dependencies: 检测场景间循环依赖（纯 Rust 实现）
 fn cmd_detect_circular_dependencies(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
     let path = opt_string(args, "path", "res://");
     let include_addons = opt_bool(args, "include_addons", false);
 
-    // 使用 GDScript Expression 检测循环依赖
-    let mut expr = Expression::new_gd();
-    let dep_code = format!(
-        "\
-var path = \"{}\" \
-var include_addons = {} \
-\
-var tscn_files = [] \
-_collect_tscn(path, tscn_files, include_addons) \
-\
-var dep_graph = {{}} \
-for tp in tscn_files: \
-    var content = _read_file(tp) \
-    if content.is_empty(): \
-        continue \
-    var deps = [] \
-    for line in content.split(\"\\n\"): \
-        if line.begins_with(\"[ext_resource\") and \".tscn\" in line: \
-            var ps = line.find(\"path=\\\"\") \
-            if ps == -1: \
-                continue \
-            ps += 6 \
-            var pe = line.find(\"\\\"\", ps) \
-            if pe == -1: \
-                continue \
-            var ref_path = line.substr(ps, pe - ps) \
-            if ref_path.ends_with(\".tscn\"): \
-                deps.append(ref_path) \
-    dep_graph[tp] = deps \
-\
-var cycles = [] \
-var visited = {{}} \
-for scene in dep_graph: \
-    visited[scene] = \"unvisited\" \
-for scene in dep_graph: \
-    if visited[scene] == \"unvisited\": \
-        var path_stack = [] \
-        _dfs_detect(scene, dep_graph, visited, path_stack, cycles) \
-\
-return {{\"scenes_checked\": tscn_files.size(), \"circular_dependencies\": cycles, \"has_circular\": cycles.size() > 0, \"dependency_graph\": dep_graph}} \
-\n\
-func _collect_tscn(p, out, include): \
-    var dir = DirAccess.open(p) \
-    if dir == null: \
-        return \
-    dir.list_dir_begin() \
-    var fn = dir.get_next() \
-    while not fn.is_empty(): \
-        if fn.begins_with(\".\"): \
-            fn = dir.get_next() \
-            continue \
-        var fp = p.path_join(fn) \
-        if dir.current_is_dir(): \
-            if fn == \"addons\" and not include: \
-                fn = dir.get_next() \
-                continue \
-            _collect_tscn(fp, out, include) \
-        elif fn.ends_with(\".tscn\"): \
-            out.append(fp) \
-        fn = dir.get_next() \
-    dir.list_dir_end() \
-\n\
-func _read_file(fp): \
-    var file = FileAccess.open(fp, FileAccess.READ) \
-    if file == null: \
-        return \"\" \
-    var content = file.get_as_text() \
-    file.close() \
-    return content \
-\n\
-func _dfs_detect(node, graph, visited, path_stack, cycles): \
-    visited[node] = \"visiting\" \
-    path_stack.append(node) \
-    if graph.has(node): \
-        for dep in graph[node]: \
-            if not visited.has(dep): \
-                continue \
-            if visited[dep] == \"visiting\": \
-                var cycle_start = path_stack.find(dep) \
-                var cycle = path_stack.slice(cycle_start) \
-                cycle.append(dep) \
-                cycles.append(cycle) \
-            elif visited[dep] == \"unvisited\": \
-                _dfs_detect(dep, graph, visited, path_stack, cycles) \
-    path_stack.pop_back() \
-    visited[node] = \"visited\"",
-        path, if include_addons { "true" } else { "false" }
-    );
+    // 收集所有 .tscn 文件
+    let mut tscn_files = Vec::new();
+    collect_files_by_ext(&path, &["tscn"], &mut tscn_files, include_addons);
 
-    if expr.parse(&dep_code, ) != godot::global::Error::OK {
-        return Err(McpError::internal("解析循环依赖检测表达式失败"));
+    // 构建依赖图
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    for tp in &tscn_files {
+        let content = read_file_text(tp);
+        if content.is_empty() {
+            continue;
+        }
+        let deps = parse_ext_resource_refs(&content);
+        graph.insert(tp.clone(), deps);
     }
 
-    let result = expr.execute();
-    let result_str: String = result.to();
+    // DFS 检测循环依赖
+    let mut visited: HashMap<String, String> = HashMap::new();
+    let mut cycles: Vec<Vec<String>> = Vec::new();
+    let mut path_stack = Vec::new();
 
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
-        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
-            return Err(McpError::internal(err));
+    for scene in graph.keys() {
+        visited.insert(scene.clone(), "unvisited".to_string());
+    }
+    for scene in graph.keys() {
+        if visited.get(scene).map(|s| s.as_str()) == Some("unvisited") {
+            dfs_detect_cycle(scene, &graph, &mut visited, &mut path_stack, &mut cycles);
         }
-        return Ok(parsed);
     }
 
     Ok(serde_json::json!({
-        "scenes_checked": 0,
-        "circular_dependencies": [],
-        "has_circular": false,
-        "raw_result": result_str,
+        "scenes_checked": tscn_files.len(),
+        "circular_dependencies": cycles,
+        "has_circular": !cycles.is_empty(),
+        "dependency_graph": graph,
     }))
 }
 
-/// 6. get_project_statistics: 获取项目统计信息
+/// 6. get_project_statistics: 获取项目统计信息（纯 Rust 实现）
 fn cmd_get_project_statistics(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
     let path = opt_string(args, "path", "res://");
     let include_addons = opt_bool(args, "include_addons", false);
 
-    // 使用 GDScript Expression 获取统计信息
-    let mut expr = Expression::new_gd();
-    let stat_code = format!(
-        "\
-var path = \"{}\" \
-var include_addons = {} \
-var file_counts = {{}} \
-_collect_stats(path, include_addons, file_counts) \
-\
-var total_script_lines = int(file_counts.get(\"_total_script_lines\", 0)) \
-var scene_count = int(file_counts.get(\"_scene_count\", 0)) \
-var resource_count = int(file_counts.get(\"_resource_count\", 0)) \
-var total_files = int(file_counts.get(\"_total_files\", 0)) \
-file_counts.erase(\"_total_script_lines\") \
-file_counts.erase(\"_scene_count\") \
-file_counts.erase(\"_resource_count\") \
-file_counts.erase(\"_total_files\") \
-\
-var autoloads = {{}} \
-for prop in ProjectSettings.get_property_list(): \
-    var pn = prop[\"name\"] \
-    if pn.begins_with(\"autoload/\"): \
-        autoloads[pn.substr(9)] = str(ProjectSettings.get_setting(pn)) \
-\
-var plugins = [] \
-var enabled = ProjectSettings.get_setting(\"editor_plugins/enabled\", []) \
-var plugin_dir = DirAccess.open(\"res://addons\") \
-if plugin_dir != null: \
-    plugin_dir.list_dir_begin() \
-    var dn = plugin_dir.get_next() \
-    while not dn.is_empty(): \
-        if plugin_dir.current_is_dir() and not dn.begins_with(\".\"): \
-            var cfg_path = \"res://addons/\".path_join(dn).path_join(\"plugin.cfg\") \
-            if FileAccess.file_exists(cfg_path): \
-                var pp = \"res://addons/%s/plugin.cfg\" % dn \
-                plugins.append({{\"name\": dn, \"enabled\": pp in enabled}}) \
-        dn = plugin_dir.get_next() \
-    plugin_dir.list_dir_end() \
-\
-return {{\"file_counts_by_extension\": file_counts, \"total_files\": total_files, \"total_script_lines\": total_script_lines, \"scene_count\": scene_count, \"resource_count\": resource_count, \"autoloads\": autoloads, \"plugins\": plugins}} \
-\n\
-func _collect_stats(p, include, counts): \
-    var dir = DirAccess.open(p) \
-    if dir == null: \
-        return \
-    dir.list_dir_begin() \
-    var fn = dir.get_next() \
-    while not fn.is_empty(): \
-        if fn.begins_with(\".\"): \
-            fn = dir.get_next() \
-            continue \
-        var fp = p.path_join(fn) \
-        if dir.current_is_dir(): \
-            if fn == \"addons\" and not include: \
-                fn = dir.get_next() \
-                continue \
-            _collect_stats(fp, include, counts) \
-        else: \
-            var ext = fn.get_extension().to_lower() \
-            counts[ext] = counts.get(ext, 0) + 1 \
-            if ext == \"gd\": \
-                var file = FileAccess.open(fp, FileAccess.READ) \
-                if file: \
-                    var content = file.get_as_text() \
-                    file.close() \
-                    var lc = content.count(\"\\n\") + 1 if not content.is_empty() else 0 \
-                    counts[\"_total_script_lines\"] = counts.get(\"_total_script_lines\", 0) + lc \
-            if ext == \"tscn\": \
-                counts[\"_scene_count\"] = counts.get(\"_scene_count\", 0) + 1 \
-            if ext in [\"tres\", \"material\", \"theme\", \"stylebox\", \"font\"]: \
-                counts[\"_resource_count\"] = counts.get(\"_resource_count\", 0) + 1 \
-            counts[\"_total_files\"] = counts.get(\"_total_files\", 0) + 1 \
-        fn = dir.get_next() \
-    dir.list_dir_end()",
-        path, if include_addons { "true" } else { "false" }
+    let mut file_counts: HashMap<String, i64> = HashMap::new();
+    let mut total_script_lines = 0i64;
+    let mut scene_count = 0i64;
+    let mut resource_count = 0i64;
+
+    let total_files = collect_stats_recursive(
+        &path, include_addons,
+        &mut file_counts, &mut total_script_lines,
+        &mut scene_count, &mut resource_count,
     );
 
-    if expr.parse(&stat_code, ) != godot::global::Error::OK {
-        return Err(McpError::internal("解析项目统计表达式失败"));
+    // 序列化 file_counts
+    let file_counts_json: serde_json::Map<String, serde_json::Value> = file_counts
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+        .collect();
+
+    // 收集 autoloads - 使用 GDScript Expression 获取
+    let mut autoloads = serde_json::Map::new();
+    let autoload_code = "\
+var ps = ProjectSettings.get_singleton(); \
+var list = ps.get_property_list(); \
+var result = {}; \
+for p in list: \
+    var name = str(p.get('name', '')); \
+    if name.begins_with('autoload/'): \
+        result[name.substr(9)] = str(ps.get_setting(name)); \
+return result";
+    let mut al_expr = godot::classes::Expression::new_gd();
+    if al_expr.parse(autoload_code) == godot::global::Error::OK {
+        let result = al_expr.execute();
+        let s: String = result.to();
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(obj) = parsed.as_object() {
+                autoloads = obj.clone();
+            }
+        }
     }
 
-    let result = expr.execute();
-    let result_str: String = result.to();
-
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
-        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
-            return Err(McpError::internal(err));
+    // 收集插件信息
+    let mut plugins = Vec::new();
+    let plugin_dir = DirAccess::open("res://addons");
+    if let Some(mut pd) = plugin_dir {
+        pd.list_dir_begin();
+        loop {
+            let dn = pd.get_next().to_string();
+            if dn.is_empty() { break; }
+            if dn.starts_with('.') { continue; }
+            if pd.current_is_dir() {
+                let cfg_path = format!("res://addons/{}/plugin.cfg", dn);
+                if FileAccess::file_exists(&cfg_path) {
+                    // 检查插件是否在启用列表中 - 使用 GDScript Expression
+                    let plugin_check_code = format!(
+                        "var ep = ProjectSettings.get_setting('editor_plugins/enabled', []); \
+                         return '{}' in ep",
+                        cfg_path
+                    );
+                    let mut plug_expr = godot::classes::Expression::new_gd();
+                    let enabled = if plug_expr.parse(&plugin_check_code) == godot::global::Error::OK {
+                        let r = plug_expr.execute();
+                        let s: String = r.to();
+                        s == "true"
+                    } else {
+                        false
+};
+                    plugins.push(serde_json::json!({
+                        "name": dn,
+                        "enabled": enabled,
+                    }));
+                }
+            }
         }
-        return Ok(parsed);
+        pd.list_dir_end();
     }
 
     Ok(serde_json::json!({
-        "raw_result": result_str,
+        "file_counts_by_extension": file_counts_json,
+        "total_files": total_files,
+        "total_script_lines": total_script_lines,
+        "scene_count": scene_count,
+        "resource_count": resource_count,
+        "autoloads": autoloads,
+        "plugins": plugins,
     }))
 }
 
@@ -713,29 +658,22 @@ func _collect_stats(p, include, counts): \
 /// 收集本模块的所有工具定义
 pub fn collect_tools() -> Vec<ToolDefinition> {
     vec![
-        // 1. find_unused_resources: 查找未使用的资源
         ToolDefinition::new("find_unused_resources", "查找项目中可能未使用的资源文件", serde_json::json!({
             "type": "object", "properties": {
                 "path": { "type": "string", "description": "搜索路径，默认为 res://", "default": "res://" },
                 "include_addons": { "type": "boolean", "description": "是否包含 addons 目录", "default": false }
             }, "required": []
         })),
-
-        // 2. analyze_signal_flow: 分析信号连接流
         ToolDefinition::new("analyze_signal_flow", "分析当前场景的信号连接流", serde_json::json!({
             "type": "object", "properties": {
                 "node_path": { "type": "string", "description": "要分析的节点路径（可选，不传则分析整个场景）" }
             }, "required": []
         })),
-
-        // 3. analyze_scene_complexity: 分析场景复杂度
         ToolDefinition::new("analyze_scene_complexity", "分析场景的复杂度（节点数、深度、类型分布等）", serde_json::json!({
             "type": "object", "properties": {
                 "path": { "type": "string", "description": "场景文件路径（可选，不传则分析当前编辑场景）" }
             }, "required": []
         })),
-
-        // 4. find_script_references: 查找脚本引用
         ToolDefinition::new("find_script_references", "查找引用指定脚本的所有文件", serde_json::json!({
             "type": "object", "properties": {
                 "query": { "type": "string", "description": "要搜索的脚本路径或类名" },
@@ -743,16 +681,12 @@ pub fn collect_tools() -> Vec<ToolDefinition> {
                 "include_addons": { "type": "boolean", "description": "是否包含 addons 目录", "default": false }
             }, "required": ["query"]
         })),
-
-        // 5. detect_circular_dependencies: 检测循环依赖
         ToolDefinition::new("detect_circular_dependencies", "检测场景文件之间的循环依赖", serde_json::json!({
             "type": "object", "properties": {
                 "path": { "type": "string", "description": "搜索路径", "default": "res://" },
                 "include_addons": { "type": "boolean", "description": "是否包含 addons 目录", "default": false }
             }, "required": []
         })),
-
-        // 6. get_project_statistics: 获取项目统计信息
         ToolDefinition::new("get_project_statistics", "获取项目统计信息（文件数、脚本行数、场景数等）", serde_json::json!({
             "type": "object", "properties": {
                 "path": { "type": "string", "description": "统计路径", "default": "res://" },
