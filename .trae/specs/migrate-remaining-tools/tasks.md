@@ -109,35 +109,35 @@
 
 ---
 
-## [ ] Task 10: Phase 4 — 新建模块 (theme, animation_tree, navigation, particle)
+## [x] Task 10: Phase 4 — 新建模块 (theme, animation_tree, navigation, particle)
 
-- [ ] SubTask 10.1: [新建模块] 创建 `theme.rs`，实现 7 个工具
-- [ ] SubTask 10.2: [新建模块] 创建 `animation_tree.rs`，实现 8 个工具
-- [ ] SubTask 10.3: [新建模块] 创建 `navigation.rs`，实现 5 个工具
-- [ ] SubTask 10.4: [新建模块] 创建 `particle.rs`，实现 5 个工具
-
----
-
-## [ ] Task 11: Phase 4 — 新建模块 (analysis, test, android)
-
-- [ ] SubTask 11.1: [新建模块] 创建 `analysis.rs`，实现 6 个工具
-- [ ] SubTask 11.2: [新建模块] 创建 `test.rs`，实现 5 个工具
-- [ ] SubTask 11.3: [新建模块] 创建 `android.rs`，实现 3 个工具
+- [x] SubTask 10.1: [新建模块] 创建 `theme.rs`，实现 7 个工具
+- [x] SubTask 10.2: [新建模块] 创建 `animation_tree.rs`，实现 8 个工具
+- [x] SubTask 10.3: [新建模块] 创建 `navigation.rs`，实现 5 个工具
+- [x] SubTask 10.4: [新建模块] 创建 `particle.rs`，实现 5 个工具
 
 ---
 
-## [ ] Task 12: Phase 4 — 扩展已有模块
+## [x] Task 11: Phase 4 — 新建模块 (analysis, test, android)
 
-- [ ] SubTask 12.1: [project.rs] 补充 7 个工具 (filesystem搜索、项目设置)
-- [ ] SubTask 12.2: [shader.rs] 补充 4 个工具 (编辑、分配材质、参数管理)
-- [ ] SubTask 12.3: [physics.rs] 补充 5 个工具 (碰撞、物理层、物理体)
-- [ ] SubTask 12.4: [audio.rs] 补充 4 个工具 (音频总线管理)
-- [ ] SubTask 12.5: [tilemap.rs] 补充 3 个工具 (单元格操作)
-- [ ] SubTask 12.6: [scene_3d.rs] 补充 3 个工具 (材质、环境、GridMap)
-- [ ] SubTask 12.7: [export.rs] 补充 2 个工具 (预设列表、导出)
-- [ ] SubTask 12.8: [script.rs] 补充 2 个工具 (打开脚本、验证脚本)
-- [ ] SubTask 12.9: [profiling.rs] 补充 1 个工具 (编辑器性能)
-- [ ] SubTask 12.10: [input.rs] 补充 1 个工具 (输入序列)
+- [x] SubTask 11.1: [新建模块] 创建 `analysis.rs`，实现 6 个工具
+- [x] SubTask 11.2: [新建模块] 创建 `test.rs`，实现 5 个工具
+- [x] SubTask 11.3: [新建模块] 创建 `android.rs`，实现 3 个工具
+
+---
+
+## [x] Task 12: Phase 4 — 扩展已有模块
+
+- [x] SubTask 12.1: [project.rs] 补充 7 个工具 (filesystem搜索、项目设置)
+- [x] SubTask 12.2: [shader.rs] 补充 4 个工具 (编辑、分配材质、参数管理)
+- [x] SubTask 12.3: [physics.rs] 补充 5 个工具 (碰撞、物理层、物理体)
+- [x] SubTask 12.4: [audio.rs] 补充 4 个工具 (音频总线管理)
+- [x] SubTask 12.5: [tilemap.rs] 补充 3 个工具 (单元格操作)
+- [x] SubTask 12.6: [scene_3d.rs] 补充 3 个工具 (材质、环境、GridMap)
+- [x] SubTask 12.7: [export.rs] 补充 2 个工具 (预设列表、导出)
+- [x] SubTask 12.8: [script.rs] 补充 2 个工具 (打开脚本、验证脚本)
+- [x] SubTask 12.9: [profiling.rs] 补充 1 个工具 (编辑器性能)
+- [x] SubTask 12.10: [input.rs] 补充 1 个工具 (输入序列)
 
 ---
 

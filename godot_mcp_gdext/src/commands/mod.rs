@@ -22,6 +22,13 @@ mod shader;
 mod physics;
 mod scene_3d;
 mod audio;
+mod theme;
+mod animation_tree;
+mod navigation;
+mod particle;
+mod analysis;
+mod test;
+mod android;
 
 type CommandFn = fn(&serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError>;
 
@@ -54,6 +61,13 @@ pub fn collect_all_tools() -> Vec<ToolDefinition> {
     tools.extend(physics::collect_tools());
     tools.extend(scene_3d::collect_tools());
     tools.extend(audio::collect_tools());
+    tools.extend(theme::collect_tools());
+    tools.extend(animation_tree::collect_tools());
+    tools.extend(navigation::collect_tools());
+    tools.extend(particle::collect_tools());
+    tools.extend(analysis::collect_tools());
+    tools.extend(test::collect_tools());
+    tools.extend(android::collect_tools());
     tools
 }
 
@@ -75,6 +89,13 @@ fn register_all(registry: &mut HashMap<String, CommandFn>) {
     physics::register(registry);
     scene_3d::register(registry);
     audio::register(registry);
+    theme::register(registry);
+    animation_tree::register(registry);
+    navigation::register(registry);
+    particle::register(registry);
+    analysis::register(registry);
+    test::register(registry);
+    android::register(registry);
 }
 
 pub fn execute_tool(name: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {

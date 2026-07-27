@@ -28,6 +28,16 @@ pub fn collect_tools() -> Vec<ToolDefinition> {
         ToolDefinition::new("attach_script", "为节点附加脚本", serde_json::json!({
             "type": "object", "properties": { "node_path": { "type": "string" }, "script_path": { "type": "string" } }, "required": ["node_path", "script_path"]
         })),
+        // 获取编辑器中打开的脚本列表
+        ToolDefinition::new("get_open_scripts", "获取编辑器中打开的所有脚本", serde_json::json!({
+            "type": "object", "properties": {}, "required": []
+        })),
+        // 验证脚本语法
+        ToolDefinition::new("validate_script", "验证脚本语法", serde_json::json!({
+            "type": "object", "properties": {
+                "path": { "type": "string" }
+            }, "required": ["path"]
+        })),
     ]
 }
 
@@ -37,6 +47,8 @@ pub fn register(registry: &mut HashMap<String, fn(&serde_json::Map<String, serde
     registry.insert("create_script".into(), cmd_create_script);
     registry.insert("edit_script".into(), cmd_edit_script);
     registry.insert("attach_script".into(), cmd_attach_script);
+    registry.insert("get_open_scripts".into(), cmd_get_open_scripts);
+    registry.insert("validate_script".into(), cmd_validate_script);
 }
 
 fn collect_gd_files(path: &str, files: &mut Vec<String>) {
@@ -110,5 +122,62 @@ fn cmd_attach_script(args: &serde_json::Map<String, serde_json::Value>) -> Resul
             Ok(serde_json::json!({"attached": true, "node": np, "script": sp}))
         }
         None => Err(McpError::not_found(&format!("Script '{}'", sp), "")),
+    }
+}
+
+/// 获取编辑器中打开的所有脚本
+fn cmd_get_open_scripts(_: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
+    let editor = EditorInterface::singleton();
+    let script_editor = editor.get_script_editor().ok_or_else(|| McpError::internal("Script editor not available"))?;
+    let open_scripts = script_editor.get_open_scripts();
+
+    let mut scripts: Vec<serde_json::Value> = Vec::new();
+    for i in 0..open_scripts.len() {
+        if let Some(s) = open_scripts.get(i) {
+            let path = s.get("resource_path").to::<String>();
+            let class_name = s.get_class().to_string();
+            scripts.push(serde_json::json!({
+                "path": path,
+                "type": class_name,
+            }));
+        }
+    }
+
+    Ok(serde_json::json!({"scripts": scripts, "count": scripts.len()}))
+}
+
+/// 验证脚本语法
+fn cmd_validate_script(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
+    let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| McpError::invalid_params("Missing path"))?;
+
+    use godot::classes::file_access::ModeFlags;
+    if !FileAccess::file_exists(path) {
+        return Err(McpError::not_found(&format!("Script '{}'", path), ""));
+    }
+
+    let mut file = FileAccess::open(path, ModeFlags::READ).ok_or_else(|| McpError::internal("Cannot read script"))?;
+    let source_code = file.get_as_text().to_string();
+    file.close();
+
+    // 创建 GDScript 实例来验证语法
+    let mut script = godot::classes::GDScript::new_gd();
+    script.set_source_code(&source_code);
+    let err_code = script.reload();
+
+    if err_code == godot::global::Error::OK {
+        Ok(serde_json::json!({"path": path, "valid": true, "message": "Script compiles successfully"}))
+    } else {
+        let err_code_i32: i32 = match err_code {
+            godot::global::Error::OK => 0,
+            _ => 1,
+        };
+        let err_str = format!("{:?}", err_code);
+        Ok(serde_json::json!({
+            "path": path,
+            "valid": false,
+            "error_code": err_code_i32,
+            "error_string": err_str,
+            "message": "Compilation failed. Check the script for errors."
+        }))
     }
 }
