@@ -1,16 +1,8 @@
 [configuration]
-entry_symbol = "gdextension_entry"
-compatibility_minimum = "4.3"
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.2"
 
 [libraries]
-# Windows
-windows.debug.x86_64    = "res://addons/godot_mcp_rs/godot_mcp_gdext.windows.template_debug.x86_64.dll"
-windows.release.x86_64  = "res://addons/godot_mcp_rs/godot_mcp_gdext.windows.template_release.x86_64.dll"
-
-# Linux
-linux.debug.x86_64      = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.linux.template_debug.x86_64.so"
-linux.release.x86_64    = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.linux.template_release.x86_64.so"
-
-# macOS
-macos.debug             = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.macos.template_debug.framework"
-macos.release           = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.macos.template_release.framework"
+windows.x86_64  = "res://addons/godot_mcp_rs/godot_mcp_gdext.dll"
+linux.x86_64    = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.so"
+macos.debug     = "res://addons/godot_mcp_rs/libgodot_mcp_gdext.framework"

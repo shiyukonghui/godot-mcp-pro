@@ -42,13 +42,14 @@ impl McpTransport {
 
         godot_print!("[MCP-RS] ✅ TCP 服务器监听 {} (等待 mcp_bridge 连接)", addr);
 
-        // 主循环：接受连接
+        // 主循环：接受连接（每个连接在独立 tokio 任务中处理）
         while let Ok((stream, peer)) = listener.accept().await {
             godot_print!("[MCP-RS] 🔗 收到连接: {:?}", peer);
             let state = self.state.clone();
-            let (reader, mut writer) = stream.into_split();
-            let mut buf_reader = BufReader::new(reader);
-            let mut line = String::new();
+            tokio::spawn(async move {
+                let (reader, mut writer) = stream.into_split();
+                let mut buf_reader = BufReader::new(reader);
+                let mut line = String::new();
 
             // 此连接的消息循环
             loop {
@@ -145,8 +146,7 @@ impl McpTransport {
                     break;
                 }
             }
-
-            godot_print!("[MCP-RS] 🔌 连接已断开: {:?}", peer);
+            });
         }
     }
 }

@@ -5,29 +5,37 @@
 ## 一、总体架构
 
 ```
-                  ═══ Godot Editor Process ═══
-                  ┌────────────────────────────┐
-                  │  Rust GDExtension           │
-                  │  (godot_mcp_rs)             │
-                  │                             │
-                  │  ┌──────────────────────┐   │
-AI ──TCP/MCP──►   │  │  MCP Protocol Layer  │   │
-(9876)            │  │  TCP Server           │───┤──► EditorInterface API
-                  │  │  JSON-RPC Handler     │   │
-                  │  └──────┬───────────────┘   │
-                  │         │                    │
-                  │  ┌──────▼───────────────┐   │
-                  │  │  Command Router       │   │
-                  │  │  Tool definitions     │───┤──► SceneTree/Node API
-                  │  │  Result serialization │   │
-                  │  └──────┬───────────────┘   │
-                  │         │                    │
-                  │  ┌──────▼───────────────┐   │
-                  │  │  Runtime Agent        │   │
-                  │  │  (file IPC / shared   │───┤──► Game Process
-                  │  │   memory bridge)      │   │
-                  │  └──────────────────────┘   │
-                  └────────────────────────────┘
+                  ═══ Godot Editor Process ════════          ═══ Game Process ═══
+                  ┌─────────────────────────────────┐        ┌─────────────────┐
+                  │  Rust GDExtension (godot_mcp_rs)│        │  GDScript       │
+                  │                                 │        │  Autoloads      │
+                  │  plugin.rs                      │        │                 │
+AI ──TCP/MCP──►   │   ├── _process() 轮询请求       │        │ mcp_runtime_    │
+(9876)            │   ├── handle_mcp_message()      │        │ agent.gd        │
+                  │   ├── handle_call_tool() ────►  │──IPC──►│  场景树/属性    │
+                  │   └── build_response()          │  file  │  截图           │
+                  │                                 │        │  输入模拟等     │
+                  │  mcp/transport.rs                │        │                 │
+                  │   ├── TCP 服务器 (tokio 线程)    │        │ mcp_screenshot_ │
+                  │   └── crossbeam channel 投递     │        │ service.gd      │
+                  │                                 │        │                 │
+                  │  commands/ (24 个模块)            │        │ mcp_input_      │
+                  │   ├── collect_all_tools() ───────┤        │ service.gd      │
+                  │   └── execute_tool() ────────────┤        │                 │
+                  │             │                    │        │                 │
+                  │             ▼                    │        │                 │
+                  │     EditorInterface API          │         └─────────────────┘
+                  │     SceneTree/Node API           │
+                  └─────────────────────────────────┘
+```
+
+### 通信路径
+
+```
+AI Client → mcp_bridge(stdin/Content-Length) → TCP(newline-delimited JSON)
+  → transport.rs(tokio 线程) → crossbeam channel → plugin.rs::_process(Godot 主线程)
+  → commands::execute_tool() → EditorInterface/Node API
+  → response via crossbeam channel → TCP → mcp_bridge → stdout
 ```
 
 ### 关键设计决策
@@ -47,28 +55,48 @@ AI ──TCP/MCP──►   │  │  MCP Protocol Layer  │   │
 
 ### 组件 1：`godot_mcp_gdext`（GDExtension 动态库）
 
-**输出**: `target/release/libgodot_mcp_gdext.dll` → Godot 的 `addons/godot_mcp_rs/`
+**输出**: `target/debug/godot_mcp_gdext.dll` → Godot 的 `addons/godot_mcp_rs/`
 
 ```
 godot_mcp_gdext/
 ├── src/
 │   ├── lib.rs               # GDExtension 入口
-│   ├── plugin.rs             # EditorPlugin 实现
+│   ├── plugin.rs             # EditorPlugin + MCP 消息处理 (handle_mcp_message)
 │   ├── mcp/
 │   │   ├── mod.rs
-│   │   ├── transport.rs      # TCP 服务器 (tokio)
-│   │   ├── protocol.rs       # MCP 消息编解码
-│   │   └── handler.rs        # initialize/list_tools/call_tool 处理
+│   │   ├── transport.rs      # TCP 服务器 (tokio 线程, crossbeam 通道)
+│   │   ├── protocol.rs       # MCP/JSON-RPC 数据类型
+│   │   └── handler.rs        # (预留, 当前逻辑在 plugin.rs)
 │   ├── commands/
-│   │   ├── mod.rs            # 命令路由注册
-│   │   ├── project.rs        # get_project_info 等
-│   │   ├── scene.rs          # 场景操作
-│   │   ├── node.rs           # 节点 CRUD
-│   │   └── runtime.rs        # 运行时中继
+│   │   ├── mod.rs            # 命令路由: collect_all_tools / execute_tool
+│   │   ├── project.rs        # 项目管理 (3 工具)
+│   │   ├── scene.rs          # 场景操作 (10 工具)
+│   │   ├── node.rs           # 节点 CRUD (17 工具)
+│   │   ├── editor.rs         # 编辑器操作 (13 工具)
+│   │   ├── runtime.rs        # 运行时 IPC 客户端 (19 工具)
+│   │   ├── profiling.rs      # 性能监控 (2 工具)
+│   │   ├── script.rs         # 脚本管理 (7 工具)
+│   │   ├── input.rs          # 输入模拟 (6 工具)
+│   │   ├── batch.rs          # 批量操作 (7 工具)
+│   │   ├── animation.rs      # 动画管理 (6 工具)
+│   │   ├── tilemap.rs        # 瓦片地图 (6 工具)
+│   │   ├── resource.rs       # 资源管理 (6 工具)
+│   │   ├── export.rs         # 导出管理 (3 工具)
+│   │   ├── shader.rs         # 着色器 (6 工具)
+│   │   ├── physics.rs        # 物理系统 (6 工具)
+│   │   ├── scene_3d.rs       # 3D 场景 (6 工具)
+│   │   ├── audio.rs          # 音频系统 (6 工具)
+│   │   ├── theme.rs          # 主题管理 (7 工具)
+│   │   ├── animation_tree.rs # 动画树 (8 工具)
+│   │   ├── navigation.rs     # 导航系统 (5 工具)
+│   │   ├── particle.rs       # 粒子系统 (5 工具)
+│   │   ├── analysis.rs       # 代码分析 (6 工具)
+│   │   ├── test.rs           # 测试自动化 (5 工具)
+│   │   └── android.rs        # Android 部署 (3 工具)
 │   └── utils/
 │       ├── mod.rs
 │       ├── serialize.rs      # Godot 类型 ↔ JSON 序列化
-│       └── error.rs          # 错误码体系
+│       └── error.rs          # JSON-RPC 错误码体系
 ├── Cargo.toml
 └── addons/godot_mcp_rs/
     ├── plugin.cfg            # Godot 插件元数据
@@ -87,11 +115,20 @@ mcp_bridge/
 
 **代码量**: ~80 行 — 纯字节流透传，无业务逻辑
 
-### 组件 3：运行时 Godot 脚本（GDScript）
+### 组件 3：运行时 Autoload（GDScript）
 
 **文件**: `addons/godot_mcp_rs/mcp_runtime_agent.gd`
+**文件**: `addons/godot_mcp/mcp_screenshot_service.gd`（由 GDScript 插件注入）
+**文件**: `addons/godot_mcp/mcp_input_service.gd`（由 GDScript 插件注入）
 
-由于 GDExtension 在游戏进程中加载时无法访问编辑器 API，运行时仍需少量 GDScript 做 Autoload。但**文件 IPC 改为共享内存或 Named Pipe**，由 GDExtension 端的 tokio 任务直接读写。
+GDExtension 在游戏进程中加载时无法访问编辑器 API，因此运行时代理使用 GDScript Autoload 驻留游戏进程，通过**文件 IPC** 与编辑器通信。
+
+**当前状态**：
+- 编辑器端 `commands/runtime.rs` 实现 19 个运行时工具的编辑器侧 IPC 客户端
+- 游戏端 `mcp_runtime_agent.gd` 已实现场景树查询（`get_scene_tree`）
+- 其他 18 个运行时工具（`get_game_node_properties`、`capture_frames` 等）的游戏侧 GDScript 尚未实现
+- 截图和输入服务由原 GDScript 插件的 Autoload（`mcp_screenshot_service.gd`、`mcp_input_service.gd`）提供
+- IPC 协议：JSON 行协议 via `user://mcp_game_request` / `user://mcp_game_response`
 
 ---
 
@@ -171,60 +208,59 @@ struct Tool {
 
 ## 四、项目里程碑
 
-### M1：基础架构（本阶段完成）
+### M1：基础架构（已完成）
 
 ```
-□  创建 Cargo workspace
-□  引入 godot/gdextension 依赖
-□  空的 GDExtension 在 Godot 中成功加载
-□  plugin.cfg + .gdextension 配置文件
-□  TCP 服务器在 9876 端口启动
-□  桥接器二进制完成
-□  AI 侧能连接并收到 initialize 响应
+✅  创建 Cargo workspace
+✅  引入 godot/gdextension 依赖
+✅  空的 GDExtension 在 Godot 中成功加载
+✅  plugin.cfg + .gdextension 配置文件
+✅  TCP 服务器在 9876 端口启动
+✅  桥接器二进制完成
+✅  AI 侧能连接并收到 initialize 响应
 ```
 
-### M2：核心命令集
+### M2：核心命令集（已完成）
 
 ```
-□  MCP list_tools 返回工具列表
-□  MCP call_tool 路由到对应 handler
-□  P0 工具全部实现（~10 个）
-□  错误码体系（内部错误、参数错误、未找到等）
-□  Godot 类型 ←→ serde_json 序列化
+✅  MCP list_tools 返回工具列表
+✅  MCP call_tool 路由到对应 handler
+✅  P0 工具全部实现
+✅  错误码体系（内部错误、参数错误、未找到等）
+✅  Godot 类型 ←→ serde_json 序列化
 ```
 
-### M3：完整功能
+### M3：完整功能（已完成 — 编译通过，171/171 工具）
 
 ```
-□  P1 工具全部实现（~15 个）
-□  运行时中继：文件 IPC / Named Pipe
-□  P2 工具
-□  MCP notifications (tools/list_changed 等)
-□  连接管理：自动重连、心跳、超时
+✅  全部 171 个工具 Rust 迁移完成
+✅  运行时中继：文件 IPC (编辑器侧 19 工具，游戏侧基础实现)
+✅  MCP notifications (tools/list_changed 等 — 预留)
+✅  连接管理：心跳、超时
 ```
 
-### M4：打磨与发布
+### M4：打磨与发布（进行中）
 
 ```
-□  错误信息本地化、suggestion 提示
-□  UndoRedo 集成
-□  性能优化
-□  CI 构建
-□  文档 + 使用说明
+☐  运行时游戏侧 GDScript 补全（18 个待实现命令）
+☐  UndoRedo 集成
+☐  性能优化
+☐  CI 构建
+☐  文档 + 使用说明
 ```
 
 ---
 
 ## 五、技术难点与应对
 
-| 难点 | 应对方案 |
-|------|----------|
-| GDExtension 中无法使用 stdio | 改用 TCP + 桥接器 |
-| Godot 对象生命周期（`free()` 后访问） | 使用 `is_instance_valid()` 包装 |
-| tokio 运行时与 Godot 主线程同步 | 用 `channel` 传递任务到 `_process` |
-| GDExtension 中 `EditorInterface` API 覆盖度不足 | 结合 `execute_editor_script` 兜底 |
-| 运行时游戏通信 | 初期复用文件 IPC，后续升级 Named Pipe |
-| Windows 上的 Named Pipe | 使用 `tokio::net::windows::named_pipe` |
+| 难点 | 应对方案 | 当前状态 |
+|------|----------|----------|
+| GDExtension 中无法使用 stdio | 改用 TCP + 桥接器 | ✅ 已解决 |
+| Godot 对象生命周期（`free()` 后访问） | 使用 `is_instance_valid()` 包装 | ✅ 已处理 |
+| tokio 运行时与 Godot 主线程同步 | 用 crossbeam channel 传递任务到 `_process` | ✅ 已解决 |
+| GDExtension 中 `EditorInterface` API 覆盖度不足 | 结合 `execute_editor_script` / GDScript Expression 兜底 | ✅ 已处理（少量 Expression 保留） |
+| 运行时游戏通信 | 文件 IPC (`user://mcp_game_request/response`) | ✅ 基础可用，游戏侧待补全 |
+| Windows 上的 Named Pipe | 暂未使用（保持文件 IPC） | ⏸ 暂缓 |
 
 ---
 
@@ -232,14 +268,35 @@ struct Tool {
 
 ```
 godot-mcp-pro/
-├── Cargo.workspace            # workspace root
+├── Cargo.toml                  # workspace root
 ├── godot_mcp_gdext/            # GDExtension 核心库
 │   ├── Cargo.toml
-│   └── src/
+│   ├── src/
+│   │   ├── lib.rs              # GDExtension 入口
+│   │   ├── plugin.rs           # EditorPlugin + MCP 消息处理
+│   │   ├── mcp/                # MCP 协议层
+│   │   │   ├── transport.rs    # TCP 服务器 (tokio + crossbeam)
+│   │   │   ├── protocol.rs     # 数据类型
+│   │   │   └── handler.rs      # (预留)
+│   │   ├── commands/           # 24 个模块, 171 个工具
+│   │   │   ├── mod.rs          # 路由注册
+│   │   │   └── *.rs            # 各模块实现
+│   │   └── utils/
+│   │       ├── serialize.rs
+│   │       └── error.rs
+│   └── addons/godot_mcp_rs/    # Godot 侧配置
+│       ├── plugin.cfg
+│       ├── godot_mcp_rs.gdextension
+│       └── mcp_runtime_agent.gd
 ├── mcp_bridge/                 # stdio↔TCP 桥接器
 │   ├── Cargo.toml
-│   └── src/main.rs
-└── addons/godot_mcp_rs/        # Godot 侧配置
-    ├── plugin.cfg
-    └── godot_mcp_rs.gdextension
+│   └── src/main.rs             # ~80 行, 纯字节流透传
+├── addons/godot_mcp/           # 原 GDScript 插件 (保留作为备选)
+│   ├── plugin.gd
+│   ├── commands/               # GDScript 工具实现
+│   └── ...                     # (迁移完成后可移除)
+├── docs/                       # 文档
+│   └── rust_dev_plan.md
+└── scripts/
+    └── deploy.ps1              # 构建 + 部署脚本
 ```
