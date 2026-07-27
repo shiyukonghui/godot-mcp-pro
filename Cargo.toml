@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [
+    "godot_mcp_gdext",
+    "mcp_bridge",
+]

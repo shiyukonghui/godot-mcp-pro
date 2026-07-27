@@ -1,0 +1,11 @@
+[alias]
+# 构建 GDExtension (调试)
+gd = "build -p godot_mcp_gdext"
+# 构建 GDExtension (发布)
+gd-release = "build --release -p godot_mcp_gdext"
+# 构建桥接器
+bridge = "build -p mcp_bridge"
+# 构建所有
+all = "build --workspace"
+# 构建并部署到 addons
+deploy = "run -- scripts/deploy.ps1"
