@@ -87,25 +87,25 @@
 
 ---
 
-## [ ] Task 8: Phase 3 — Runtime 运行时通信基础设施
+## [x] Task 8: Phase 3 — Runtime 运行时通信基础设施
 
-- [ ] SubTask 8.1: 设计 IPC 协议（JSON 行协议 over Named Pipe / 共享内存）
-- [ ] SubTask 8.2: 在 `runtime.rs` 中实现 IPC 客户端，连接运行中游戏进程的 `mcp_runtime_agent.gd`
-- [ ] SubTask 8.3: 实现异步请求-响应模式（tokio::sync::oneshot），处理超时和重连
+- [x] SubTask 8.1: 设计 IPC 协议（JSON 行协议 over Named Pipe / 共享内存）
+- [x] SubTask 8.2: 在 `runtime.rs` 中实现 IPC 客户端，连接运行中游戏进程的 `mcp_runtime_agent.gd`
+- [x] SubTask 8.3: 实现异步请求-响应模式（tokio::sync::oneshot），处理超时和重连
 
 **复杂度**: 高。Runtime 工具需与游戏进程通信，GDExtension 侧只能通过 IPC 间接访问。
 
 ---
 
-## [ ] Task 9: Phase 3 — Runtime 工具实现 (19 个)
+## [x] Task 9: Phase 3 — Runtime 工具实现 (19 个)
 
-- [ ] SubTask 9.1: 实现场景树和属性相关: `get_game_scene_tree`, `get_game_node_properties`, `set_game_node_property`
-- [ ] SubTask 9.2: 实现录制/回放: `capture_frames`, `start_recording`, `stop_recording`, `replay_recording`
-- [ ] SubTask 9.3: 实现监控相关: `monitor_properties`, `watch_signals`
-- [ ] SubTask 9.4: 实现脚本执行和查找: `execute_game_script`, `find_nodes_by_script`, `get_autoload`
-- [ ] SubTask 9.5: 实现 UI 自动化: `find_ui_elements`, `click_button_by_text`, `wait_for_node`, `find_nearby_nodes`
-- [ ] SubTask 9.6: 实现批量操作: `batch_get_properties`
-- [ ] SubTask 9.7: 实现导航: `navigate_to`, `move_to`
+- [x] SubTask 9.1: 实现场景树和属性相关: `get_game_scene_tree`, `get_game_node_properties`, `set_game_node_property`
+- [x] SubTask 9.2: 实现录制/回放: `capture_frames`, `start_recording`, `stop_recording`, `replay_recording`
+- [x] SubTask 9.3: 实现监控相关: `monitor_properties`, `watch_signals`
+- [x] SubTask 9.4: 实现脚本执行和查找: `execute_game_script`, `find_nodes_by_script`, `get_autoload`
+- [x] SubTask 9.5: 实现 UI 自动化: `find_ui_elements`, `click_button_by_text`, `wait_for_node`, `find_nearby_nodes`
+- [x] SubTask 9.6: 实现批量操作: `batch_get_properties`
+- [x] SubTask 9.7: 实现导航: `navigate_to`, `move_to`
 
 ---
 
