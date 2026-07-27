@@ -13,6 +13,8 @@ use crate::mcp::protocol::{JsonRpcMessage, ToolDefinition};
 pub struct PluginState {
     pub pending_requests: crossbeam::channel::Sender<JsonRpcMessage>,
     pub pending_responses: crossbeam::channel::Receiver<String>,
+    /// SSE 会话响应通道（HTTP SSE 模式）：主线程发送 (session_id, 响应JSON)
+    pub sse_response_rx: crossbeam::channel::Receiver<(String, String)>,
 }
 
 /// 运行时 Autoload 定义: (设置键, GDScript 路径)
@@ -28,6 +30,8 @@ pub struct RustMcpPlugin {
     state: Option<Arc<PluginState>>,
     request_rx: Option<crossbeam::channel::Receiver<JsonRpcMessage>>,
     response_tx: Option<crossbeam::channel::Sender<String>>,
+    /// SSE 响应发送端：主线程向 HTTP 线程发送带 session_id 的响应
+    sse_response_tx: Option<crossbeam::channel::Sender<(String, String)>>,
     tool_definitions: Vec<ToolDefinition>,
     port: u16,
     /// 本次会话注入的 Autoload 键列表 (退出时只清理自己注入的)
@@ -46,12 +50,16 @@ impl RustMcpPlugin {
 
         let (req_tx, req_rx) = crossbeam::channel::unbounded();
         let (rsp_tx, rsp_rx) = crossbeam::channel::unbounded();
+        // SSE 响应通道：主线程 → HTTP 线程（带 session_id 的响应走此通道）
+        let (sse_tx, sse_rx) = crossbeam::channel::unbounded();
         self.request_rx = Some(req_rx);
         self.response_tx = Some(rsp_tx);
+        self.sse_response_tx = Some(sse_tx);
 
         let state = Arc::new(PluginState {
             pending_requests: req_tx,
             pending_responses: rsp_rx,
+            sse_response_rx: sse_rx,
         });
         self.state = Some(state.clone());
 
@@ -122,7 +130,7 @@ impl RustMcpPlugin {
         godot_print!("[MCP-RS] 已关闭");
     }
 
-    /// 每帧处理: 消费 TCP 线程投递的命令请求
+    /// 每帧处理: 消费 HTTP 线程投递的命令请求
     #[func]
     fn _process(&mut self, _delta: f64) {
         let rx = match &self.request_rx {
@@ -140,9 +148,22 @@ impl RustMcpPlugin {
                 }
             };
 
+            // 判断是否为 SSE 会话请求（带 session_id）
+            let is_sse = msg.session_id.is_some();
+            let session_id = msg.session_id.clone();
+
             let response = self.handle_mcp_message(msg);
-            if let Some(tx) = &self.response_tx {
-                let _ = tx.send(response);
+
+            if is_sse {
+                // SSE 模式的响应：通过 SSE 通道发回 HTTP 线程
+                if let (Some(sid), Some(tx)) = (session_id, &self.sse_response_tx) {
+                    let _ = tx.send((sid, response));
+                }
+            } else {
+                // 直接 HTTP 模式的响应：通过原通道发回
+                if let Some(tx) = &self.response_tx {
+                    let _ = tx.send(response);
+                }
             }
         }
     }

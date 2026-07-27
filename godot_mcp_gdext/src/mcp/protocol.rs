@@ -16,6 +16,9 @@ pub struct JsonRpcMessage {
     pub id: Option<serde_json::Value>,
     pub method: Option<String>,
     pub params: Option<serde_json::Value>,
+    /// SSE 会话 ID（仅 HTTP SSE 模式使用）
+    #[serde(skip)]
+    pub session_id: Option<String>,
 }
 
 // ═══════════════════════════════════════════════

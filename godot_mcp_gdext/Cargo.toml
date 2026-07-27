@@ -12,9 +12,13 @@ godot = "0.5"
 # JSON 序列化
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# 异步运行时 (TCP 服务器用)
+# 异步运行时 (HTTP 服务器用)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util", "time"] }
 # 跨线程通道
 crossbeam = "0.8"
 # Base64 编码 (资源预览用)
 base64 = "0.22"
+# Web 框架 — 替代手写 HTTP 解析，提供完善的 SSE 支持
+axum = "0.7"
+tokio-stream = "0.1"
+futures = "0.3"
