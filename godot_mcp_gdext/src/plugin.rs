@@ -7,6 +7,7 @@ use godot::prelude::*;
 
 use crate::commands;
 use crate::mcp::transport::McpTransport;
+use crate::mcp::transport_http::McpHttpTransport;
 use crate::mcp::protocol::{JsonRpcMessage, ToolDefinition};
 
 /// 跨线程共享的插件状态
@@ -56,8 +57,11 @@ impl RustMcpPlugin {
         self.state = Some(state.clone());
 
         let port = self.port;
+        let http_port = port + 1; // HTTP 端口 = TCP 端口 + 1
         let tools_json = serde_json::to_value(&self.tool_definitions).unwrap_or_default();
+        let state_for_http = state.clone();
 
+        // TCP 线程（兼容 mcp_bridge）
         std::thread::Builder::new()
             .name("mcp-tcp".into())
             .spawn(move || {
@@ -67,7 +71,18 @@ impl RustMcpPlugin {
             })
             .expect("[MCP-RS] TCP 线程启动失败");
 
-        godot_print!("[MCP-RS] TCP 服务器端口 {}, 已注册 {} 个工具", self.port, self.tool_definitions.len());
+        // HTTP 线程（AI 助手可直接连接，无需 mcp_bridge）
+        std::thread::Builder::new()
+            .name("mcp-http".into())
+            .spawn(move || {
+                let transport = McpHttpTransport::new(http_port, state_for_http);
+                let rt = tokio::runtime::Runtime::new().expect("[MCP-RS] HTTP tokio runtime 创建失败");
+                rt.block_on(async { transport.run().await });
+            })
+            .expect("[MCP-RS] HTTP 线程启动失败");
+
+        godot_print!("[MCP-RS] TCP 端口 {}, HTTP 端口 {}, 已注册 {} 个工具",
+            self.port, http_port, self.tool_definitions.len());
         // 注入运行时 Autoload
         self.inject_autoloads();
 
