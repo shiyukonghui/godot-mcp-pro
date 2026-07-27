@@ -68,22 +68,22 @@
 
 ---
 
-## [ ] Task 6: Phase 2 — Batch 工具扩展 (+5)
+## [x] Task 6: Phase 2 — Batch 工具扩展 (+5)
 
-- [ ] SubTask 6.1: 在 `batch.rs` 中实现 `find_signal_connections` — 遍历节点查找信号连接
-- [ ] SubTask 6.2: 在 `batch.rs` 中实现 `batch_add_nodes` — 批量创建和添加节点
-- [ ] SubTask 6.3: 在 `batch.rs` 中实现 `find_node_references` — 查找节点引用关系
-- [ ] SubTask 6.4: 在 `batch.rs` 中实现 `get_scene_dependencies` — 获取场景依赖资源
-- [ ] SubTask 6.5: 在 `batch.rs` 中实现 `cross_scene_set_property` — 跨场景设置属性
+- [x] SubTask 6.1: 在 `batch.rs` 中实现 `find_signal_connections` — 遍历节点查找信号连接
+- [x] SubTask 6.2: 在 `batch.rs` 中实现 `batch_add_nodes` — 批量创建和添加节点
+- [x] SubTask 6.3: 在 `batch.rs` 中实现 `find_node_references` — 查找节点引用关系
+- [x] SubTask 6.4: 在 `batch.rs` 中实现 `get_scene_dependencies` — 获取场景依赖资源
+- [x] SubTask 6.5: 在 `batch.rs` 中实现 `cross_scene_set_property` — 跨场景设置属性
 
 ---
 
-## [ ] Task 7: Phase 2 — Scene 工具补充 (+4)
+## [x] Task 7: Phase 2 — Scene 工具补充 (+4)
 
-- [ ] SubTask 7.1: 在 `scene.rs` 中实现 `get_scene_file_content` — 读取场景文件的 JSON/文本内容
-- [ ] SubTask 7.2: 在 `scene.rs` 中实现 `delete_scene` — 删除指定场景文件
-- [ ] SubTask 7.3: 在 `scene.rs` 中实现 `add_scene_instance` — 将场景作为实例添加到当前场景
-- [ ] SubTask 7.4: 在 `scene.rs` 中实现 `get_scene_exports` — 获取场景导出变量列表
+- [x] SubTask 7.1: 在 `scene.rs` 中实现 `get_scene_file_content` — 读取场景文件的 JSON/文本内容
+- [x] SubTask 7.2: 在 `scene.rs` 中实现 `delete_scene` — 删除指定场景文件
+- [x] SubTask 7.3: 在 `scene.rs` 中实现 `add_scene_instance` — 将场景作为实例添加到当前场景
+- [x] SubTask 7.4: 在 `scene.rs` 中实现 `get_scene_exports` — 获取场景导出变量列表
 
 ---
 
