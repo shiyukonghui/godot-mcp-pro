@@ -1,137 +1,116 @@
 # Godot MCP Pro
 
-Premium MCP (Model Context Protocol) server for AI-powered Godot game development. Connects AI assistants like Claude directly to your Godot editor with **175 powerful tools**.
+Rust 实现的 MCP (Model Context Protocol) 服务，为 AI 驱动的 Godot 游戏开发提供支持。AI 助手通过 HTTP 直接连接到 Godot 编辑器，内置 **175+ 个工具**。
 
-## Architecture
+> 本项目基于 [Godot MCP Pro](https://buymeacoffee.com/y1uda/extras) (作者 y1uda) 的 Rust 重实现，感谢原作者的开创性工作。
+
+## 架构
 
 ```
-AI Assistant ←—stdio/MCP—→ Node.js Server ←—WebSocket:6505—→ Godot Editor Plugin
+AI Assistant —HTTP POST /mcp—→ Godot GDExtension (内置 HTTP 服务器 :9877)
+                                   └─ 主线程处理队列 → Godot Editor API
 ```
 
-- **Real-time**: WebSocket connection means instant feedback, no file polling
-- **Editor Integration**: Full access to Godot's editor API, UndoRedo system, and scene tree
-- **JSON-RPC 2.0**: Standard protocol with proper error codes and suggestions
+- **零中介**: 无需 Node.js 服务器、无需桥接器，插件内置 HTTP 服务器
+- **直接集成**: 完整访问 Godot Editor API、UndoRedo 系统、场景树
+- **JSON-RPC 2.0**: 标准协议，完善的错误码和响应
 
-## What's in this repo
+## 仓库内容
 
-> ⚠️ **This public repo only contains the free Godot addon/plugin.** The MCP server (Node.js, required to connect AI assistants) is distributed as part of the paid package — **one-time purchase**, lifetime updates:
->
-> - **Buy Me a Coffee**: <https://buymeacoffee.com/y1uda/extras>
-> - **itch.io**: <https://y1uda.itch.io/godot-mcp-pro>
->
-> The paid zip includes the addon, the `server/` directory with pre-built JavaScript, `INSTALL.md`, and AI-client instructions. If you cloned this repo and don't see a `server/` folder, **that's expected** — grab the full package from one of the links above.
+本项目是 **Godot MCP Pro** 的 Rust 重实现（GDExtension），包含：
 
-## Quick Start
+- `godot_mcp_gdext/` — Rust GDExtension 源码，内置 HTTP MCP 服务器
+- `addons/godot_mcp_rs/` — Godot 插件目录（编译后的 DLL + 配置）
+- `mcp_bridge/` — （可选）兼容 stdio 模式的桥接器，仅在需要 stdio 传输时使用
 
-### 1. Install the Godot Plugin
+> 本实现基于 [Godot MCP Pro](https://buymeacoffee.com/y1uda/extras) (原作者 y1uda) 的 GDScript/Node.js 版本重写为纯 Rust，感谢原作者的开创性工作。
 
-Copy the `addons/godot_mcp/` folder into your Godot project's `addons/` directory.
+## 快速开始
 
-Enable the plugin: **Project → Project Settings → Plugins → Godot MCP Pro → Enable**
+### 1. 部署插件
 
-### 2. Install the MCP Server
+将 `addons/godot_mcp_rs/` 目录复制到你的 Godot 项目的 `addons/` 目录下。
 
-> The `server/` directory is only included in the **full paid package** (see above). After downloading and extracting the zip, run:
+> 如果是首次使用，需要先编译 GDExtension。运行部署脚本：
+> ```bash
+> # 构建 Rust 并复制 DLL 到插件目录
+> powershell -File scripts/deploy.ps1
+> ```
 
-```bash
-cd server
-npm install
-npm run build
+### 2. 启用插件
+
+打开 Godot 编辑器，进入 **Project → Project Settings → Plugins**，找到 **Godot MCP RS**，点击 **Enable**。
+
+启用后，输出面板会显示启动信息：
+
+```
+[MCP-RS] === Godot MCP RS 启动完成 ===
+[MCP-RS] HTTP 端口 9877, 已注册 174 个工具
+[MCP-RS] 🌐 HTTP 服务器监听 127.0.0.1:9877 (AI 助手可直接 POST /mcp)
 ```
 
-### 3. Configure Claude Code
+### 3. 配置 AI 客户端
 
-Add to your `.mcp.json`:
+AI 助手通过 HTTP POST 请求与 Godot 插件通信，端点为：
+
+```
+POST http://127.0.0.1:9877/mcp
+Content-Type: application/json
+
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+```
+
+#### Claude Code / Cline 配置
+
+如果 AI 客户端支持 MCP over HTTP，可以直接配置为 HTTP 端点：
 
 ```json
 {
   "mcpServers": {
-    "godot-mcp-pro": {
-      "command": "node",
-      "args": ["/path/to/server/build/index.js"],
-      "env": {
-        "GODOT_MCP_PORT": "6505"
-      }
+    "godot-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:9877/mcp"
     }
   }
 }
 ```
 
-### 4. Choose Your Mode
+#### 通用 HTTP 客户端
 
-Godot MCP Pro offers four modes to fit any client's tool limit:
+任何支持 HTTP 的 AI 助手均可直接调用。例如在 Python 中测试：
 
-| Mode | Tools | Best For |
-|------|-------|----------|
-| **Full** (default) | 175 | Claude Code, Cline, VS Code Copilot, Cursor |
-| **3D** (`--3d`) | 103 | Antigravity and other 100-tool-limit clients needing 3D |
-| **Lite** (`--lite`) | 84 | Windsurf, JetBrains Junie, Gemini CLI |
-| **Minimal** (`--minimal`) | 35 | OpenCode, local LLMs with small context |
+```python
+import requests, json
 
-```json
-{
-  "mcpServers": {
-    "godot-mcp-pro": {
-      "command": "node",
-      "args": ["/path/to/server/build/index.js", "--lite"]
-    }
-  }
-}
+# 列出所有工具
+rsp = requests.post("http://127.0.0.1:9877/mcp", json={
+    "jsonrpc": "2.0", "id": 1, "method": "tools/list"
+})
+print(rsp.json())
 ```
 
-Replace `--lite` with `--minimal` for the smallest footprint.
+### 4. 配置端口（可选）
 
-- **Lite** includes: project, scene, node, script, editor, input, runtime, and input_map tools.
-- **Minimal** includes: 35 essential tools — project info, scene management, node CRUD, script editing, editor errors, input simulation, and runtime inspection.
+默认端口为 **9876**（MCP 端口），HTTP 端口为 **9877**（MCP 端口 + 1）。
 
-### 5. CLI Mode (Alternative to MCP)
+可通过 Project Settings 添加自定义端口：
 
-For clients without MCP support, or when you want zero context overhead, use the CLI directly from a terminal/bash tool. The CLI requires the server to be built first (Step 2).
-
-```bash
-# Top-level help — shows all command groups
-node /path/to/server/build/cli.js --help
-
-# Group help — shows commands in a group
-node /path/to/server/build/cli.js node --help
-
-# Command help — shows options for a command
-node /path/to/server/build/cli.js node add --help
-
-# Execute
-node /path/to/server/build/cli.js project info
-node /path/to/server/build/cli.js scene play
-node /path/to/server/build/cli.js node add --type CharacterBody3D --name Player
+```
+godot_mcp/port = 9876   # MCP 端口
+                          # HTTP 端口自动为 9877
 ```
 
-Replace `/path/to/` with the actual path where you extracted the files.
+### 5. 使用 AI 助手操作 Godot 编辑器
 
-The CLI connects directly to the Godot editor plugin via WebSocket. It requires:
-- Godot editor running with the MCP plugin enabled
-- Server built (`node build/setup.js install`)
-- An available port in the 6510-6514 range
+插件启用后，AI 助手即可：
 
-**Advantage**: LLMs discover capabilities progressively via `--help` instead of loading all tool definitions upfront. This works with any LLM client that has terminal access, regardless of tool count limits.
+- 查询项目信息、场景树
+- 创建/删除/修改节点和属性
+- 编辑脚本和 Shader
+- 管理动画、TileMap、导航等
+- 运行时调试和监控
 
-### 6. Client Compatibility
-
-| Client | Recommended Mode | Notes |
-|--------|-----------------|-------|
-| Claude Code | Full (default) | Deferred tool loading — minimal context cost |
-| VS Code Copilot | Full | Virtual Tools auto-group tools |
-| OpenAI Codex CLI | Full | MCPSearch defers overflow |
-| Cline | Full | No hard limit; use `enabledTools` to whitelist |
-| Roo Code | Full | No hard limit |
-| Windsurf | Lite | 100 tool limit |
-| JetBrains Junie | Lite | 100 tool limit |
-| Gemini CLI | Lite | ~100 client limit; use `excludeTools` for finer control |
-| Cursor | Full | Tool limit removed (Dynamic Context Discovery) |
-| OpenCode | Minimal or CLI | Models degrade past ~40 tools |
-| Local LLMs (LM Studio, etc.) | Minimal or CLI | Context window is the bottleneck |
-
-### 7. Use It
-
-Open your Godot project with the plugin enabled, then use Claude Code to interact with the editor.
+> **无需桥接器**：插件内置 HTTP 服务器，AI 助手直接 POST 请求即可通信，无需 `mcp_bridge` 或 Node.js 环境。
 
 ## All 175 Tools
 
@@ -399,13 +378,13 @@ Open your Godot project with the plugin enabled, then use Claude Code to interac
 | `run_stress_test` | Run performance stress test |
 | `get_test_report` | Get test results report |
 
-## Key Features
+## 核心特性
 
-- **UndoRedo Integration**: All node/property operations support Ctrl+Z
-- **Smart Type Parsing**: `"Vector2(100, 200)"`, `"#ff0000"`, `"Color(1,0,0)"` auto-converted
-- **Auto-Reconnect**: Exponential backoff reconnection (1s → 2s → 4s ... → 60s max)
-- **Heartbeat**: 10s ping/pong keeps connection alive
-- **Helpful Errors**: Error responses include suggestions for next steps
+- **零中介架构**: HTTP 服务器直接集成在 GDExtension 中，无需 Node.js/WebSocket 桥接
+- **UndoRedo 集成**: 所有节点/属性操作支持 Ctrl+Z 撤销
+- **智能类型解析**: `"Vector2(100, 200)"`, `"#ff0000"`, `"Color(1,0,0)"` 自动转换
+- **纯 Rust 实现**: 利用 Godot 4 GDExtension 的 Rust 绑定，高性能、低资源占用
+- **完善的错误处理**: 错误响应包含下一步操作建议
 
 ## Competitive Comparison
 
@@ -446,13 +425,12 @@ Open your Godot project with the plugin enabled, then use Claude Code to interac
 
 ### Feature Matrix
 
-| Feature | Godot MCP Pro | GDAI MCP ($19) | tomyud1 (free) | Dokujaa (free) | Coding-Solo (free) |
+| Feature | Godot MCP Pro (Rust) | GDAI MCP ($19) | tomyud1 (free) | Dokujaa (free) | Coding-Solo (free) |
 |---------|:---:|:---:|:---:|:---:|:---:|
-| **Connection** | WebSocket (real-time) | stdio (Python) | WebSocket | TCP Socket | Headless CLI |
+| **Connection** | HTTP (零中介, 内置服务器) | stdio (Python) | WebSocket | TCP Socket | Headless CLI |
+| **Implementation** | Rust GDExtension | GDScript + Python | GDScript + WebSocket | GDScript | GDScript |
 | **Undo/Redo** | Yes | Yes | No | No | No |
 | **JSON-RPC 2.0** | Yes | Custom | Custom | Custom | N/A |
-| **Auto-reconnect** | Yes (exponential backoff) | N/A | No | No | N/A |
-| **Heartbeat** | Yes (10s ping/pong) | No | No | No | No |
 | **Error suggestions** | Yes (contextual hints) | No | No | No | No |
 | **Screenshot capture** | Yes (editor + game) | Yes | No | No | No |
 | **Game input simulation** | Yes (key/mouse/action/sequence) | Yes (basic) | No | No | No |
@@ -482,18 +460,24 @@ Open your Godot project with the plugin enabled, then use Claude Code to interac
 | **Testing/QA** | 6 tools | Automated testing, assertions, stress testing, screenshot comparison |
 | **Runtime** | 19 tools | Inspect and control game at runtime: inspect, record, replay, navigate |
 
-### Architecture Advantages
+### 架构优势
 
-| Aspect | Godot MCP Pro | Typical Competitor |
+| Aspect | Godot MCP Pro (Rust) | Typical Competitor |
 |--------|--------------|-------------------|
-| **Protocol** | JSON-RPC 2.0 (standard, extensible) | Custom JSON or CLI-based |
-| **Connection** | Persistent WebSocket with heartbeat | Per-command subprocess or raw TCP |
-| **Reliability** | Auto-reconnect with exponential backoff (1s→60s) | Manual reconnection required |
+| **Protocol** | JSON-RPC 2.0 over HTTP | Custom JSON or CLI-based |
+| **Connection** | 零中介 HTTP (内置 GDExtension) | Per-command subprocess or raw TCP |
+| **Implementation** | Rust (GDExtension 原生) | GDScript + Node.js/Python |
 | **Type Safety** | Smart type parsing (Vector2, Color, Rect2, hex colors) | String-only or limited types |
 | **Error Handling** | Structured errors with codes + suggestions | Generic error messages |
 | **Undo Support** | All mutations go through UndoRedo system | Direct modifications (no undo) |
-| **Port Management** | Auto-scan ports 6505-6509 | Fixed port, conflicts possible |
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE) for details. Purchase includes lifetime updates.
+本项目为 **Godot MCP Pro** 的 Rust 重实现，保留原作者版权声明。
+
+- 原始项目 [Godot MCP Pro](https://buymeacoffee.com/y1uda/extras) (作者 y1uda) — 付费许可
+- Rust 重实现部分遵循原始项目的许可条款
+
+---
+
+> 特别感谢 [y1uda](https://buymeacoffee.com/y1uda/extras) 创建了 Godot MCP Pro 这一优秀的工具，本 Rust 移植版本正是建立在其开创性工作之上。
