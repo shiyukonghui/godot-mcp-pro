@@ -252,31 +252,26 @@ fn cmd_get_project_settings(args: &serde_json::Map<String, serde_json::Value>) -
     let _include_default = args.get("include_default").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let mut settings = serde_json::Map::new();
-    // 通过 get_property_list 获取所有设置 - 使用 GDScript Expression
-    let code = format!(
-        "var ps = ProjectSettings.get_singleton(); \
-         var list = ps.get_property_list(); \
-         var result = []; \
-         for p in list: \
-           if p.name.begins_with('{}'): \
-             result.append(p.name); \
-         return result",
-        prefix.replace('\'', "\\'")
-    );
-    let mut expr = godot::classes::Expression::new_gd();
-    if expr.parse(&code) != godot::global::Error::OK {
-        return Ok(serde_json::json!({"settings": {}, "count": 0, "error": "Script parsing failed"}));
-    }
-    let result = expr.execute();
-    let names_arr = result.to::<godot::builtin::VarArray>();
-    for i in 0..names_arr.len() {
-        if let Some(name_v) = names_arr.get(i) {
-            let name = name_v.to::<String>();
-            let val = if project.has_setting(&name) {
-                format!("{}", project.get_setting(&name))
-            } else { String::new() };
-            settings.insert(name, serde_json::Value::String(val));
+    // 直接读取 ProjectSettings 属性列表，避免 Expression 返回 NIL 导致强制转换崩溃。
+    let property_list = project.get_property_list();
+    for entry in property_list.iter_shared() {
+        let Some(name_variant) = entry.get(&Variant::from("name")) else {
+            continue;
+        };
+        let name = match name_variant.get_type() {
+            VariantType::STRING_NAME => name_variant.to::<StringName>().to_string(),
+            VariantType::STRING => name_variant.to::<GString>().to_string(),
+            _ => continue,
+        };
+        if !name.starts_with(prefix) {
+            continue;
         }
+        let value = if project.has_setting(&name) {
+            crate::utils::serialize::serialize_variant(&project.get_setting(&name))
+        } else {
+            serde_json::Value::Null
+        };
+        settings.insert(name, value);
     }
     Ok(serde_json::json!({"settings": settings, "count": settings.len()}))
 }

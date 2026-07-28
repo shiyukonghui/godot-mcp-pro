@@ -236,10 +236,17 @@ fn cmd_get_node_properties(args: &serde_json::Map<String, serde_json::Value>) ->
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
 
-    let nil_var = Variant::nil();
     for i in 0..prop_list.len() {
         let entry = match prop_list.get(i) { Some(e) => e, None => continue, };
-        let name = entry.get(&Variant::from("name")).unwrap_or(nil_var.clone()).to::<String>();
+        let Some(name_variant) = entry.get(&Variant::from("name")) else {
+            continue;
+        };
+        // Godot 4.7 的属性元数据名称为 StringName，旧版本可能返回 String。
+        let name = match name_variant.get_type() {
+            VariantType::STRING_NAME => name_variant.to::<StringName>().to_string(),
+            VariantType::STRING => name_variant.to::<GString>().to_string(),
+            _ => continue,
+        };
         if name.starts_with('_') || name == "script" { continue; }
         if let Some(ref f) = filter { if !f.contains(&name) { continue; } }
 

@@ -134,8 +134,9 @@ impl RustMcpPlugin {
     }
 
     /// 每帧处理: 消费 HTTP 线程投递的命令请求
+    /// 注意：不使用 _process 虚方法名，避免 godot-rust 绑定层虚方法分发问题
     #[func]
-    fn _process(&mut self, _delta: f64) {
+    fn poll_mcp(&mut self, _delta: f64) {
         let rx = match &self.request_rx {
             Some(rx) => rx,
             None => return,

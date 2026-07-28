@@ -587,14 +587,15 @@ for p in list: \
     var name = str(p.get('name', '')); \
     if name.begins_with('autoload/'): \
         result[name.substr(9)] = str(ps.get_setting(name)); \
-return result";
+return JSON.stringify(result)";
     let mut al_expr = godot::classes::Expression::new_gd();
     if al_expr.parse(autoload_code) == godot::global::Error::OK {
         let result = al_expr.execute();
-        let s: String = result.to();
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
-            if let Some(obj) = parsed.as_object() {
-                autoloads = obj.clone();
+        if let Ok(s) = result.try_to::<String>() {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
+                if let Some(obj) = parsed.as_object() {
+                    autoloads = obj.clone();
+                }
             }
         }
     }
@@ -620,8 +621,7 @@ return result";
                     let mut plug_expr = godot::classes::Expression::new_gd();
                     let enabled = if plug_expr.parse(&plugin_check_code) == godot::global::Error::OK {
                         let r = plug_expr.execute();
-                        let s: String = r.to();
-                        s == "true"
+                        r.try_to::<bool>().unwrap_or(false)
                     } else {
                         false
 };

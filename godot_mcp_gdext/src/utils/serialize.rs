@@ -2,7 +2,8 @@
 //! 兼容 godot 0.5.x API
 
 use godot::builtin::{
-    Color, NodePath, Rect2, Variant, VariantType, VarArray, Vector2, Vector3,
+    AnyArray, Color, NodePath, Rect2, StringName, Variant, VariantType, VarArray, Vector2,
+    Vector3,
 };
 
 /// 将 Godot Variant 序列化为 JSON 值
@@ -13,6 +14,7 @@ pub fn serialize_variant(value: &Variant) -> serde_json::Value {
         VariantType::INT => serde_json::json!(value.to::<i64>()),
         VariantType::FLOAT => serde_json::json!(value.to::<f64>()),
         VariantType::STRING => serde_json::json!(value.to::<String>()),
+        VariantType::STRING_NAME => serde_json::json!(value.to::<StringName>().to_string()),
 
         VariantType::VECTOR2 => {
             let v = value.to::<Vector2>();
@@ -48,14 +50,15 @@ pub fn serialize_variant(value: &Variant) -> serde_json::Value {
             serde_json::json!(value.to::<NodePath>().to_string())
         }
 
-        // Dictionary 简化处理: 转为字符串 (避免 keys() API 兼容问题)
+        // Dictionary 简化处理：使用 Godot 字符串化接口，避免强制转换为 String。
         VariantType::DICTIONARY => {
-            serde_json::json!(value.to::<String>())
+            serde_json::json!(value.stringify().to_string())
         }
 
         // Array
         VariantType::ARRAY => {
-            let arr = value.to::<VarArray>();
+            // AnyArray 可读取 Array[NodePath] 等类型化数组，不要求转换为无类型 Array。
+            let arr = value.to::<AnyArray>();
             let nil = Variant::nil();
             let items: Vec<serde_json::Value> = (0..arr.len())
                 .map(|i| arr.get(i).unwrap_or(nil.clone()))
@@ -64,8 +67,16 @@ pub fn serialize_variant(value: &Variant) -> serde_json::Value {
             serde_json::Value::Array(items)
         }
 
-        VariantType::OBJECT => serde_json::json!(value.to::<String>()),
-        _ => serde_json::json!(value.to::<String>()),
+        VariantType::OBJECT => {
+            let instance_id = value.object_id_unchecked().map(|id| id.to_string());
+            serde_json::json!({
+                "type": "Object",
+                "instance_id": instance_id,
+                "value": value.stringify().to_string(),
+            })
+        }
+        // 未显式支持的内建类型使用 Godot 自身的字符串化接口，避免错误的强制类型转换。
+        _ => serde_json::json!(value.stringify().to_string()),
     }
 }
 

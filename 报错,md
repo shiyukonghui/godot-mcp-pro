@@ -1,0 +1,12 @@
+  ERROR: 实例为 null（未传递），无法使用 self
+  ERROR: C:\Users\wyl\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\godot-core-0.5.4\src\private.rs:333 - [panic C:\Users\wyl\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\godot-core-0.5.4\src\meta\godot_convert\mod.rs:157]
+  ERROR:   FromGodot::from_variant() failed -- cannot convert from NIL to ARRAY: null
+  ERROR:   in RustMcpPlugin::_process()
+  ERROR: res://addons/godot_mcp_rs/plugin.gd:32 - Bug: Invalid call error code 1337.
+  ERROR: 实例为 null（未传递），无法使用 self
+  ERROR: C:\Users\wyl\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\godot-core-0.5.4\src\private.rs:333 - [panic C:\Users\wyl\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\godot-core-0.5.4\src\meta\godot_convert\mod.rs:157]
+  ERROR:   FromGodot::from_variant() failed -- cannot convert from NIL to ARRAY: null
+  ERROR:   in RustMcpPlugin::_process()
+  ERROR: res://addons/godot_mcp_rs/plugin.gd:32 - Bug: Invalid call error code 1337.
+
+
