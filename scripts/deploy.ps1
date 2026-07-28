@@ -55,9 +55,9 @@ if ($GodotProject) {
     if (-not (Test-Path $TargetAddon)) {
         New-Item -ItemType Directory -Force $TargetAddon | Out-Null
     }
-    Copy-Item -Force $TargetDll $TargetAddon\
-    Copy-Item -Force (Join-Path $AddonDir "godot_mcp_rs.gdextension") $TargetAddon\
-    Copy-Item -Force (Join-Path $AddonDir "plugin.cfg") $TargetAddon\
+    Copy-Item -Force $TargetDll (Join-Path $TargetAddon "godot_mcp_gdext.dll")
+    Copy-Item -Force (Join-Path $AddonDir "godot_mcp_rs.gdextension") $TargetAddon
+    Copy-Item -Force (Join-Path $AddonDir "plugin.cfg") $TargetAddon
     Write-Host "  ✓ 已同步到 Godot 项目: $GodotProject" -ForegroundColor Green
 }
 

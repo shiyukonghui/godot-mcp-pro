@@ -83,21 +83,21 @@ impl McpHttpTransport {
         });
 
         // 构建 axum Router
-        let app = Router::new()
-            .route(
-                "/mcp",
-                MethodRouter::new()
-                    .get(sse_handler)
-                    .post(post_handler)
-                    .options(options_handler),
-            )
-            .route(
-                "/sse",
-                MethodRouter::new()
-                    .get(sse_handler)
-                    .options(options_handler),
-            )
-            .with_state(app_state);
+    let app = Router::new()
+        .route(
+            "/mcp",
+            MethodRouter::new()
+                .get(get_handler)       // GET /mcp → JSON 状态（连通性检查）
+                .post(post_handler)     // POST /mcp → JSON-RPC
+                .options(options_handler),
+        )
+        .route(
+            "/sse",
+            MethodRouter::new()
+                .get(sse_handler)       // GET /sse → SSE 流
+                .options(options_handler),
+        )
+        .with_state(app_state);
 
         let addr = format!("127.0.0.1:{}", self.port);
         let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -123,7 +123,7 @@ struct AppState {
 }
 
 // ═══════════════════════════════════════════════════════════
-// SSE 端点
+// SSE 端点 (GET /sse)
 // ═══════════════════════════════════════════════════════════
 
 /// SSE 流：先发送 endpoint 事件，后续转发工具调用响应
@@ -157,6 +157,23 @@ async fn sse_handler(
                 .interval(Duration::from_secs(15))
                 .text("keep-alive"),
         ),
+    )
+}
+
+// ═══════════════════════════════════════════════════════════
+// 连通性检查 (GET /mcp)
+// ═══════════════════════════════════════════════════════════
+
+/// GET /mcp — 返回 JSON 状态，供客户端检查连通性
+async fn get_handler() -> Response {
+    let status = serde_json::json!({
+        "status": "ok",
+        "server": "godot-mcp-rs",
+        "transport": "streamable-http"
+    });
+    cors_json_response(
+        StatusCode::OK,
+        serde_json::to_string(&status).unwrap_or_default(),
     )
 }
 
