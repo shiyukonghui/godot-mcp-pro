@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 /// 通用的 JSON-RPC 请求消息
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcMessage {
+    /// JSON-RPC 版本标识
+    #[allow(dead_code)]
     pub jsonrpc: Option<String>,
     pub id: Option<serde_json::Value>,
     pub method: Option<String>,
@@ -50,12 +52,14 @@ impl ToolDefinition {
 
 /// 命令执行结果
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CommandResult {
     pub success: bool,
     pub data: serde_json::Value,
     pub error: Option<String>,
 }
 
+#[allow(dead_code)]
 impl CommandResult {
     pub fn ok(data: serde_json::Value) -> Self {
         Self { success: true, data, error: None }

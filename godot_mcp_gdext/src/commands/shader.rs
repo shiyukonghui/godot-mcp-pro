@@ -126,7 +126,7 @@ fn cmd_set_shader_param(args: &serde_json::Map<String, serde_json::Value>) -> Re
     let mut node = root.get_node_as::<godot::classes::Node>(node_path);
 
     // 获取节点的材质
-    let material = node.get("material");
+    let _material = node.get("material");
     // 通过 Variant 设置 shader parameter
     // 使用 serialize 模块解析值
     let variant = crate::utils::serialize::parse_value_for_property(value);
@@ -141,7 +141,7 @@ fn cmd_get_shader_params(args: &serde_json::Map<String, serde_json::Value>) -> R
 
     // 加载 Shader 资源
     let mut rl = ResourceLoader::singleton();
-    let shader = rl.load(path).ok_or_else(|| McpError::not_found(&format!("Shader '{}'", path), ""))?;
+    let _shader = rl.load(path).ok_or_else(|| McpError::not_found(&format!("Shader '{}'", path), ""))?;
 
     // 获取着色器参数列表 - 使用 GDScript Expression
     let mut params = serde_json::Map::new();

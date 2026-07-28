@@ -1,7 +1,7 @@
 //! 导出命令模块
 
 use std::collections::HashMap;
-use godot::classes::{ConfigFile, EditorInterface, FileAccess, ProjectSettings};
+use godot::classes::{ConfigFile, FileAccess, ProjectSettings};
 use godot::prelude::*;
 
 use crate::mcp::protocol::ToolDefinition;

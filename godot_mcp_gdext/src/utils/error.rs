@@ -12,6 +12,7 @@ pub struct McpError {
     pub data: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 impl McpError {
     /// -32700: JSON 解析错误
     pub fn parse_error() -> Self {

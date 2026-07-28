@@ -37,11 +37,6 @@ fn req_string(args: &serde_json::Map<String, serde_json::Value>, key: &str) -> R
         .ok_or_else(|| McpError::invalid_params(&format!("缺少必填参数: {}", key)))
 }
 
-/// 从参数中读取可选 i64
-fn opt_i64(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: i64) -> i64 {
-    args.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
-}
-
 /// 递归收集指定扩展名的文件
 fn collect_files_by_ext(path: &str, extensions: &[&str], out: &mut Vec<String>, include_addons: bool) {
     let dir = DirAccess::open(path);

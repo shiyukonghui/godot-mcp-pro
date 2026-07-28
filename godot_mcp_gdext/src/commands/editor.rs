@@ -18,9 +18,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use godot::builtin::NodePath;
 use godot::classes::file_access::ModeFlags;
-use godot::classes::{EditorInterface, Expression, FileAccess, Image, Node, ProjectSettings};
+use godot::classes::{EditorInterface, Expression, FileAccess, Image, ProjectSettings};
 use godot::global::Error;
 use godot::obj::Gd;
 use godot::prelude::*;
@@ -134,27 +133,6 @@ pub fn register(registry: &mut HashMap<String, fn(&serde_json::Map<String, serde
 // 辅助函数
 // ============================================================================
 
-/// 从场景根节点查找节点
-fn find_node(root: &Gd<Node>, path: &str) -> Option<Gd<Node>> {
-    if path == "." || path == root.get_name().to_string() {
-        return Some(root.clone());
-    }
-    let np = NodePath::from(path);
-    let np_str = np.to_string();
-    if root.has_node(&np_str) {
-        return Some(root.get_node_as::<Node>(&np_str));
-    }
-    let root_name = root.get_name().to_string();
-    if let Some(rest) = path.strip_prefix(&(root_name + "/")) {
-        let np2 = NodePath::from(rest);
-        let np2_str = np2.to_string();
-        if root.has_node(&np2_str) {
-            return Some(root.get_node_as::<Node>(&np2_str));
-        }
-    }
-    None
-}
-
 /// 从参数中读取可选字符串
 fn opt_string(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: &str) -> String {
     args.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
@@ -163,11 +141,6 @@ fn opt_string(args: &serde_json::Map<String, serde_json::Value>, key: &str, defa
 /// 从参数中读取可选整数
 fn opt_int(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: i64) -> i64 {
     args.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
-}
-
-/// 从参数中读取可选浮点数
-fn opt_float(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: f64) -> f64 {
-    args.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
 }
 
 /// 读取 godot.log 文件中的日志行, 支持过滤
@@ -209,34 +182,6 @@ fn image_to_base64(img: &mut Gd<Image>) -> Result<String, McpError> {
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(png_data.as_slice());
     Ok(b64)
-}
-
-/// 从路径或 base64 加载图片
-fn load_image(value: &str) -> Result<Gd<Image>, McpError> {
-    let mut img = Image::new_gd();
-    if value.starts_with("res://") || value.starts_with("user://") {
-        let err = img.load(value);
-        if err != Error::OK {
-            return Err(McpError::invalid_params(&format!("无法加载图片: {}", value)));
-        }
-        Ok(img)
-    } else {
-        // 将 base64 字符串解码为字节数组
-        use base64::Engine as _;
-        let buf = base64::engine::general_purpose::STANDARD
-            .decode(value)
-            .map_err(|e| McpError::invalid_params(&format!("base64 解码失败: {}", e)))?;
-        // 使用 PackedByteArray 加载 PNG
-        let mut pba = godot::builtin::PackedByteArray::new();
-        for b in &buf {
-            pba.push(*b);
-        }
-        let err = img.load_png_from_buffer(&pba);
-        if err != Error::OK {
-            return Err(McpError::invalid_params("从 base64 加载 PNG 失败"));
-        }
-        Ok(img)
-    }
 }
 
 /// 尝试获取编辑器 3D 视口相机 (使用 execute_editor_script 执行 GDScript)

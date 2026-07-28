@@ -110,7 +110,7 @@ fn cmd_tilemap_set_cell(args: &serde_json::Map<String, serde_json::Value>) -> Re
 
     // 解析可选的 atlas_coords
     let atlas_coords = args.get("atlas_coords").and_then(|v| v.as_object());
-    let atlas = match atlas_coords {
+    let _atlas = match atlas_coords {
         Some(coords) => {
             let ax = coords.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let ay = coords.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
@@ -139,10 +139,10 @@ fn cmd_tilemap_fill_rect(args: &serde_json::Map<String, serde_json::Value>) -> R
     let rw = rect.get("width").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
     let rh = rect.get("height").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
 
-    let source_id = args.get("source_id").and_then(|v| v.as_i64()).ok_or_else(|| McpError::invalid_params("Missing source_id"))? as i32;
+    let _source_id = args.get("source_id").and_then(|v| v.as_i64()).ok_or_else(|| McpError::invalid_params("Missing source_id"))? as i32;
 
     let atlas_coords = args.get("atlas_coords").and_then(|v| v.as_object());
-    let atlas = match atlas_coords {
+    let _atlas = match atlas_coords {
         Some(coords) => {
             let ax = coords.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let ay = coords.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;

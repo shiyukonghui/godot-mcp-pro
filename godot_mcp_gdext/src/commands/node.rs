@@ -263,6 +263,7 @@ fn cmd_duplicate_node(args: &serde_json::Map<String, serde_json::Value>) -> Resu
     let mut parent = node.get_parent().ok_or_else(|| McpError::internal("Node has no parent"))?;
 
     // duplicate() 返回 Option<Gd<Node>>，需要 unwrap
+    #[allow(deprecated)]
     let mut dup = node.duplicate().ok_or_else(|| McpError::internal("复制节点失败"))?;
     dup.set_name(new_name);
     parent.add_child(&dup);

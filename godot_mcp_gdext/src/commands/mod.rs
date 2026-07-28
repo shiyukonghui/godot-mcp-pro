@@ -30,6 +30,9 @@ mod analysis;
 mod test;
 mod android;
 
+/// 控制台输出捕获工具
+pub mod console_capture;
+
 type CommandFn = fn(&serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError>;
 
 static COMMAND_REGISTRY: std::sync::OnceLock<HashMap<String, CommandFn>> = std::sync::OnceLock::new();

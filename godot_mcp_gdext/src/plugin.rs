@@ -15,6 +15,8 @@ pub struct PluginState {
     pub pending_responses: crossbeam::channel::Receiver<String>,
     /// SSE 会话响应通道（HTTP SSE 模式）：主线程发送 (session_id, 响应JSON)
     pub sse_response_rx: crossbeam::channel::Receiver<(String, String)>,
+    /// 上一次捕获的编辑器 Output 面板内容（用于计算输出增量）
+    pub last_console_content: std::sync::Mutex<String>,
 }
 
 /// 运行时 Autoload 定义: (设置键, GDScript 路径)
@@ -60,6 +62,7 @@ impl RustMcpPlugin {
             pending_requests: req_tx,
             pending_responses: rsp_rx,
             sse_response_rx: sse_rx,
+            last_console_content: std::sync::Mutex::new(String::new()),
         });
         self.state = Some(state.clone());
 
@@ -191,15 +194,63 @@ impl RustMcpPlugin {
         let arguments = params.as_ref().and_then(|p| p.get("arguments")).cloned().unwrap_or_default();
         let args = match arguments { serde_json::Value::Object(m) => m, _ => serde_json::Map::new() };
 
-        match commands::execute_tool(&tool_name, &args) {
-            Ok(result) => {
+        // 获取上一次捕获的控制台内容
+        let last_content: String = self.state.as_ref()
+            .and_then(|s| s.last_console_content.lock().ok())
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+
+        // 执行工具
+        let result = commands::execute_tool(&tool_name, &args);
+
+        // 捕获执行后的控制台内容并计算增量
+        let console_output = match crate::commands::console_capture::capture_output_panel() {
+            Ok(current) => {
+                // 更新存储的上一次内容
+                if let Some(state) = &self.state {
+                    if let Ok(mut guard) = state.last_console_content.lock() {
+                        *guard = current.clone();
+                    }
+                }
+                // 计算新增的输出行
+                let delta = crate::commands::console_capture::compute_output_delta(&current, &last_content);
+                if delta.is_empty() { None } else { Some(delta) }
+            }
+            Err(_) => None, // 捕获失败时不阻塞工具结果
+        };
+
+        match result {
+            Ok(mut result_value) => {
+                // 如果有控制台输出增量，附加到结果中
+                if let Some(output_lines) = console_output {
+                    if let Some(obj) = result_value.as_object_mut() {
+                        obj.insert("console_output".into(), serde_json::json!(output_lines));
+                    }
+                }
                 let content = serde_json::json!([{
                     "type": "text",
-                    "text": serde_json::to_string(&result).unwrap_or_else(|_| "{}".into())
+                    "text": serde_json::to_string(&result_value).unwrap_or_else(|_| "{}".into())
                 }]);
                 self.build_response(id, serde_json::json!({"content": content}))
             }
-            Err(err) => self.build_error_response(id, err),
+            Err(err) => {
+                // 即使工具执行失败，也尝试附加控制台输出
+                if let Some(output_lines) = console_output {
+                    let err_data = serde_json::json!({
+                        "error": err.message,
+                        "code": err.code,
+                        "console_output": output_lines,
+                    });
+                    self.build_response(id, serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&err_data).unwrap_or_default()
+                        }]
+                    }))
+                } else {
+                    self.build_error_response(id, err)
+                }
+            }
         }
     }
 

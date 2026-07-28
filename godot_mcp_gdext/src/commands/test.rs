@@ -34,11 +34,6 @@ fn opt_int(args: &serde_json::Map<String, serde_json::Value>, key: &str, default
     args.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
 }
 
-/// 从参数中读取可选浮点数
-fn opt_float(args: &serde_json::Map<String, serde_json::Value>, key: &str, default: f64) -> f64 {
-    args.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
-}
-
 /// 从参数中读取必填字符串
 fn req_string(args: &serde_json::Map<String, serde_json::Value>, key: &str) -> Result<String, McpError> {
     args.get(key)

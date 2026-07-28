@@ -312,7 +312,7 @@ fn cmd_uid_to_project_path(args: &serde_json::Map<String, serde_json::Value>) ->
 /// 项目路径转 UID
 fn cmd_project_path_to_uid(args: &serde_json::Map<String, serde_json::Value>) -> Result<serde_json::Value, McpError> {
     let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| McpError::invalid_params("Missing path"))?;
-    let uid = ResourceUid::singleton();
+    let _uid = ResourceUid::singleton();
     // 使用 GDScript Expression 获取 UID
     let code = format!("var uid = ResourceUID::get_singleton(); uid.id_to_text(uid.get_id_path('{}'))", path.replace('\'', "\\'"));
     let mut expr = godot::classes::Expression::new_gd();
