@@ -145,11 +145,17 @@ fn cmd_set_material_3d(args: &serde_json::Map<String, serde_json::Value>) -> Res
         material_path.replace('\'', "\\'")
     );
     let mut expr = godot::classes::Expression::new_gd();
-    if expr.parse(&code) == godot::global::Error::OK {
-        expr.execute();
+    if expr.parse(&code) != godot::global::Error::OK {
+        return Err(McpError::internal("Failed to parse material expression"));
     }
-
-    Ok(serde_json::json!({"node_path": node_path, "material_path": material_path, "set": true}))
+    let exec_result = expr.execute();
+    // 检查表达式执行错误（get_error_text 返回 GString，非空即错）
+    let err_text = expr.get_error_text().to_string();
+    if !err_text.is_empty() {
+        return Err(McpError::internal(&format!("Material setup failed: {}", err_text)));
+    }
+    // 虽然 execute 已执行，但 Godot 调用可能异步生效，报告已触发
+    Ok(serde_json::json!({"node_path": node_path, "material_path": material_path, "set": true, "success": !exec_result.is_nil()}))
 }
 
 /// 设置 3D 环境 - 创建或配置 WorldEnvironment
@@ -214,6 +220,11 @@ fn cmd_setup_environment(args: &serde_json::Map<String, serde_json::Value>) -> R
         let mut bg_expr = godot::classes::Expression::new_gd();
         if bg_expr.parse(&bg_code) == godot::global::Error::OK {
             bg_expr.execute();
+            // 检查执行错误（get_error_text 返回 GString，非空即错）
+            let err_text = bg_expr.get_error_text().to_string();
+            if !err_text.is_empty() {
+                godot_warn!("setup_environment bg_color: {}", err_text);
+            }
         }
     }
 
@@ -231,6 +242,10 @@ fn cmd_setup_environment(args: &serde_json::Map<String, serde_json::Value>) -> R
         let mut amb_expr = godot::classes::Expression::new_gd();
         if amb_expr.parse(&amb_code) == godot::global::Error::OK {
             amb_expr.execute();
+            let err_text = amb_expr.get_error_text().to_string();
+            if !err_text.is_empty() {
+                godot_warn!("setup_environment ambient_light: {}", err_text);
+            }
         }
     }
 

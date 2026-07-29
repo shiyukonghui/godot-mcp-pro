@@ -188,20 +188,21 @@ fn image_to_base64(img: &mut Gd<Image>) -> Result<String, McpError> {
 fn get_editor_camera_via_script() -> Result<serde_json::Value, McpError> {
     let code = r#"var vp3d = EditorInterface.get_editor_viewport_3d()
 if vp3d == null:
-    return "{\"error\": \"no_3d_viewport\"}"
+    return JSON.stringify({"error": "no_3d_viewport"})
 var cam = vp3d.get_camera_3d()
 if cam == null:
-    return "{\"error\": \"no_camera\"}"
+    return JSON.stringify({"error": "no_camera"})
 var pos = cam.global_position
 var rot = cam.rotation_degrees
-return "{\"position\":{\"x\":" + str(pos.x) + ",\"y\":" + str(pos.y) + ",\"z\":" + str(pos.z) + "},\"rotation_degrees\":{\"x\":" + str(rot.x) + ",\"y\":" + str(rot.y) + ",\"z\":" + str(rot.z) + "},\"fov\":" + str(cam.fov) + ",\"near\":" + str(cam.near) + ",\"far\":" + str(cam.far) + "}"#;
+return JSON.stringify({"position":{"x":pos.x,"y":pos.y,"z":pos.z},"rotation_degrees":{"x":rot.x,"y":rot.y,"z":rot.z},"fov":cam.fov,"near":cam.near,"far":cam.far})"#;
     let result = execute_expression(code)?;
-    let json_str = result.trim_matches('"');
-    if json_str.contains("\"error\"") {
+    // 安全解析 JSON：不用 trim_matches，直接 serde_json 解析
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| McpError::internal(&format!("解析相机数据失败: {}", e)))?;
+    if parsed.get("error").is_some() {
         return Err(McpError::internal("无法获取3D视口, 请确保已打开3D场景"));
     }
-    serde_json::from_str(json_str)
-        .map_err(|e| McpError::internal(&format!("解析相机数据失败: {}", e)))
+    Ok(parsed)
 }
 
 /// 通过 Expression 执行 GDScript 并返回字符串结果
@@ -215,8 +216,22 @@ fn execute_expression(code: &str) -> Result<String, McpError> {
     if result.is_nil() {
         Ok("null".to_string())
     } else {
-        Ok(result.to::<String>())
+        // 安全序列化：使用 serialize_variant 避免强制类型转换 panic
+        Ok(crate::utils::serialize::serialize_variant(&result).to_string())
     }
+}
+
+/// 安全解析 execute_expression 返回的 JSON 字符串
+/// execute_expression 返回的是 JSON 字符串字面量（带外层引号），需要先解码内层字符串再解析 JSON
+fn parse_expression_json(script_result: &str) -> Result<serde_json::Value, McpError> {
+    // 脚本返回 null 时，execute_expression 返回 "null"，直接返回 JSON null
+    if script_result == "null" {
+        return Ok(serde_json::Value::Null);
+    }
+    let inner: String = serde_json::from_str(script_result)
+        .map_err(|e| McpError::internal(&format!("解析表达式返回值失败: {}", e)))?;
+    serde_json::from_str(&inner)
+        .map_err(|e| McpError::internal(&format!("解析 JSON 数据失败: {}", e)))
 }
 
 // ============================================================================
@@ -305,11 +320,8 @@ return JSON.stringify(result)"#
     );
 
     let script_result = execute_expression(&code)?;
-    // 去掉多余的引号
-    let json_str = script_result.trim_matches('"');
-
-    // 尝试解析 JSON
-    match serde_json::from_str::<serde_json::Value>(json_str) {
+    // 安全解析 JSON（不再使用 trim_matches）
+    match parse_expression_json(&script_result) {
         Ok(mut data) => {
             // 检查是否需要保存到文件
             let save_path = opt_string(args, "save_path", "");
@@ -420,12 +432,13 @@ fn cmd_reload_plugin(_args: &serde_json::Map<String, serde_json::Value>) -> Resu
     let code = r#"EditorInterface.set_plugin_enabled("godot_mcp", false)
 EditorInterface.set_plugin_enabled("godot_mcp", true)
 return "ok""#;
-    let _ = execute_expression(code);
-
-    Ok(serde_json::json!({
-        "reloading": true,
-        "message": "插件将重新加载, 连接会短暂断开并自动重连"
-    }))
+    match execute_expression(code) {
+        Ok(_) => Ok(serde_json::json!({
+            "reloading": true,
+            "message": "插件将重新加载, 连接会短暂断开并自动重连"
+        })),
+        Err(e) => Err(McpError::internal(&format!("插件重载失败: {:?}", e))),
+    }
 }
 
 /// reload_project: 重新扫描文件系统
@@ -482,14 +495,15 @@ return JSON.stringify(result)"#,
     );
 
     let script_result = execute_expression(&code)?;
-    let json_str = script_result.trim_matches('"');
-
-    if json_str.contains("\"error\"") && json_str.contains("node_not_found") {
-        return Err(McpError::not_found(&format!("Node '{}'", node_path), ""));
+    // 安全解析 JSON
+    let parsed = parse_expression_json(&script_result)?;
+    if let Some(error_msg) = parsed.get("error").and_then(|v| v.as_str()) {
+        if error_msg.contains("node_not_found") {
+            return Err(McpError::not_found(&format!("Node '{}'", node_path), ""));
+        }
+        return Err(McpError::internal(error_msg));
     }
-
-    serde_json::from_str(json_str)
-        .map_err(|e| McpError::internal(&format!("解析信号数据失败: {}", e)))
+    Ok(parsed)
 }
 
 /// compare_screenshots: 比较两张截图
@@ -582,17 +596,15 @@ return JSON.stringify(result)"#,
     );
 
     let script_result = execute_expression(&code)?;
-    let json_str = script_result.trim_matches('"');
-
-    if json_str.contains("\"error\"") {
-        if json_str.contains("size_mismatch") {
+    // 安全解析 JSON
+    let parsed = parse_expression_json(&script_result)?;
+    if let Some(error_msg) = parsed.get("error").and_then(|v| v.as_str()) {
+        if error_msg.contains("size_mismatch") {
             return Err(McpError::invalid_params("图片尺寸不一致"));
         }
         return Err(McpError::invalid_params("图片加载失败"));
     }
-
-    serde_json::from_str(json_str)
-        .map_err(|e| McpError::internal(&format!("解析比较结果失败: {}", e)))
+    Ok(parsed)
 }
 
 /// set_auto_dismiss: 设置自动关闭对话框
@@ -663,21 +675,19 @@ if cam == null:
         script_parts.push(format!("cam.fov = {}\n", fov));
     }
 
-    // 返回结果
+    // 返回结果 - 使用 JSON.stringify 避免手工拼接
     script_parts.push(
         r#"var pos = cam.global_position
 var rot = cam.rotation_degrees
-return "{\"position\":{\"x\":" + str(pos.x) + ",\"y\":" + str(pos.y) + ",\"z\":" + str(pos.z) + "},\"rotation_degrees\":{\"x\":" + str(rot.x) + ",\"y\":" + str(rot.y) + ",\"z\":" + str(rot.z) + "},\"fov\":" + str(cam.fov) + "}"#.to_string()
+return JSON.stringify({"position":{"x":pos.x,"y":pos.y,"z":pos.z},"rotation_degrees":{"x":rot.x,"y":rot.y,"z":rot.z},"fov":cam.fov})"#.to_string()
     );
 
     let code = script_parts.concat();
     let script_result = execute_expression(&code)?;
-    let json_str = script_result.trim_matches('"');
-
-    if json_str.contains("\"error\"") {
+    // 安全解析 JSON
+    let parsed = parse_expression_json(&script_result)?;
+    if parsed.get("error").is_some() {
         return Err(McpError::internal("无法获取3D视口, 请确保已打开3D场景"));
     }
-
-    serde_json::from_str(json_str)
-        .map_err(|e| McpError::internal(&format!("解析相机数据失败: {}", e)))
+    Ok(parsed)
 }

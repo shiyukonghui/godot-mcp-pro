@@ -115,6 +115,14 @@ fn cmd_attach_script(args: &serde_json::Map<String, serde_json::Value>) -> Resul
     let script_gd = rl.load(sp);
     match script_gd {
         Some(script) => {
+            // 验证加载的资源确实是 Script 类型
+            let class_name = script.get_class().to_string();
+            if !script.is_class("Script") {
+                return Err(McpError::invalid_params(&format!(
+                    "Resource at '{}' is not a Script (loaded as: {})",
+                    sp, class_name
+                )));
+            }
             if !root.has_node(np) { return Err(McpError::not_found(&format!("Node '{}'", np), "")); }
             let mut node = root.get_node_as::<godot::classes::Node>(np);
             // 通过 Variant 方式设置 script，绕开类型约束
@@ -167,16 +175,12 @@ fn cmd_validate_script(args: &serde_json::Map<String, serde_json::Value>) -> Res
     if err_code == godot::global::Error::OK {
         Ok(serde_json::json!({"path": path, "valid": true, "message": "Script compiles successfully"}))
     } else {
-        let err_code_i32: i32 = match err_code {
-            godot::global::Error::OK => 0,
-            _ => 1,
-        };
+        // 返回完整错误信息
         let err_str = format!("{:?}", err_code);
         Ok(serde_json::json!({
             "path": path,
             "valid": false,
-            "error_code": err_code_i32,
-            "error_string": err_str,
+            "error_text": err_str,
             "message": "Compilation failed. Check the script for errors."
         }))
     }
