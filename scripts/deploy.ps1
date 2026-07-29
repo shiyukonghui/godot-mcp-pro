@@ -61,6 +61,9 @@ if ($GodotProject) {
     Copy-Item -Force $TargetDll (Join-Path $TargetAddon "godot_mcp_gdext.dll")
     Copy-Item -Force (Join-Path $AddonDir "godot_mcp_rs.gdextension") $TargetAddon
     Copy-Item -Force (Join-Path $AddonDir "plugin.cfg") $TargetAddon
+    # 同步 GDScript 文件
+    Copy-Item -Force (Join-Path $AddonDir "plugin.gd") $TargetAddon
+    Copy-Item -Force (Join-Path $AddonDir "mcp_runtime_agent.gd") $TargetAddon
     $ProjectDll = Join-Path $TargetAddon "godot_mcp_gdext.dll"
     $SourceHash = (Get-FileHash $SourceDll -Algorithm SHA256).Hash
     $TargetHash = (Get-FileHash $ProjectDll -Algorithm SHA256).Hash

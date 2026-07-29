@@ -1,5 +1,5 @@
 # Debug Session: rust-self-null
-- **Status**: [RESOLVED] (2026-07-29)
+- **Status**: [RESOLVED] (2026-07-29, 最终验证)
 - **Issue**: GDScript 调用 RustMcpPlugin::poll_mcp() 时实例 self 为 null，并触发 NIL 到 ARRAY 转换失败
 - **Debug Server**: http://127.0.0.1:7777/event
 - **Log File**: .dbg/trae-debug-log-rust-self-null.ndjson
@@ -120,13 +120,29 @@
 
 ### 运行时 GDScript 代理缺口
 
-Rust 注册了 19 个运行时工具，但 `addons/godot_mcp_rs/mcp_runtime_agent.gd` 当前仅实现 `get_scene_tree`。其余命令（包括 `execute_game_script`）会返回 `Unknown command`。
+✅ **已修复 (2026-07-29)**：`mcp_runtime_agent.gd` 已补齐全部 19 个命令实现：
 
-| 范围 | 现状 | 后续建议 |
-|------|------|----------|
-| `execute_game_script` 等 18 个运行时工具 | Rust 侧已注册，GDScript 代理未实现。 | 补齐代理分支和结果序列化，或暂时仅注册真正可用的工具。 |
-| IPC JSON 响应 | `serde_json::from_str` 安全，不会 panic；但 FileAccess 写失败会导致 Rust 超时。 | GDScript 写失败时增加可观测日志；Rust 返回明确超时上下文。 |
-| `error` 字段 | Rust 只在字符串时识别，非字符串错误会被忽略。 | 接受结构化错误并统一转换为 McpError。 |
+| 命令 | 状态 |
+|------|------|
+| `get_scene_tree` | ✅ 已有 |
+| `get_node_properties` | ✅ 新增 |
+| `set_node_property` | ✅ 新增 |
+| `capture_frames` | ✅ 新增 |
+| `monitor_properties` | ✅ 新增 |
+| `execute_script` | ✅ 新增 |
+| `start_recording` / `stop_recording` / `replay_recording` | ✅ 新增 |
+| `find_nodes_by_script` | ✅ 新增 |
+| `get_autoload` | ✅ 新增 |
+| `batch_get_properties` | ✅ 新增 |
+| `find_ui_elements` | ✅ 新增 |
+| `click_button_by_text` | ✅ 新增 |
+| `wait_for_node` | ✅ 新增 |
+| `find_nearby_nodes` | ✅ 新增 |
+| `navigate_to` | ⚠️ 返回说明（需项目配置导航网格） |
+| `move_to` | ✅ 新增（直接位置移动） |
+| `watch_signals` | ✅ 新增 |
+| `_safe_get` 辅助函数 | ✅ 新增（Vector/Color/Transform 序列化） |
+| 部署脚本同步 .gd 文件 | ✅ `deploy.ps1` 已添加 |
 
 ### 建议修复顺序（全部完成）
 
@@ -139,7 +155,7 @@ Rust 注册了 19 个运行时工具，但 `addons/godot_mcp_rs/mcp_runtime_agen
 7. ✅ 修复导出和 Android 配置缺失键的 NIL 转换。
 8. ✅ 处理 Expression 假成功路径与 MCP 错误语义。
 9. ✅ 完善 Dictionary、Callable、RID、Transform、PackedArray 等结构化序列化。
-10. ⏸ 补齐运行时 GDScript 代理（非崩溃级，留待后续功能开发）
+10. ✅ 补齐运行时 GDScript 代理：18 个命令全部实现（2026-07-29）
 
 ### 已验证修复（避免重复处理）
 
@@ -151,4 +167,10 @@ Rust 注册了 19 个运行时工具，但 `addons/godot_mcp_rs/mcp_runtime_agen
 - `parse_value_for_property`：JSON Object 转换为 Godot Dictionary 而非 JSON 字符串。
 - `execute_expression`：使用 serialize_variant 替代强制 `.to::<String>()`。
 - 所有 `trim_matches('"')` 替换为 `parse_expression_json()` 双重 serde_json 解析。
+- `parse_expression_json`：处理 `null` 返回值（脚本返回 NIL 时 `execute_expression` 输出 `"null"` 字符串）。
 - `get_editor_camera` / `set_editor_camera`：手工 JSON 拼接改为 `JSON.stringify()`。
+- `set_material_3d`：检查 Expression 执行错误并返回详细错误信息。
+- `setup_environment`：Expression 执行错误记录到 godot_warn。
+- `reload_plugin`：检查 `execute_expression` 结果，失败时返回错误。
+- `attach_script`：验证加载资源为 Script 类型，非 Script 资源返回参数错误。
+- `validate_script`：返回完整错误文本（如 `ERR_PARSE_ERROR`），而非仅 `error_code: 1`。
