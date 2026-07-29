@@ -341,7 +341,13 @@ fn cmd_batch_add_nodes(
             errors.push(serde_json::json!({"index": i, "error": format!("Failed to instantiate type: {}", node_type)}));
             continue;
         }
-        let mut new_node: Gd<Node> = node_var.to();
+        let mut new_node: Gd<Node> = match node_var.try_to() {
+            Ok(n) => n,
+            Err(_) => {
+                errors.push(serde_json::json!({"index": i, "error": format!("'{}' is not a Node subclass", node_type)}));
+                continue;
+            }
+        };
 
         // 设置节点名称
         if !node_name.is_empty() {
@@ -355,11 +361,20 @@ fn cmd_batch_add_nodes(
             let mut exists = false;
             for j in 0..prop_list.len() {
                 if let Some(entry_dict) = prop_list.get(j) {
-                    let name: String = entry_dict
+                    let name = entry_dict
                         .get(&Variant::from("name"))
-                        .unwrap_or(Variant::nil())
-                        .to();
-                    if name == *prop_name {
+                        .unwrap_or(Variant::nil());
+                    // 兼容 StringName / String 两种属性名类型（Godot 4.7 为 StringName）
+                    let name_str: String = match name.get_type() {
+                        godot::builtin::VariantType::STRING_NAME => {
+                            name.to::<godot::builtin::StringName>().to_string()
+                        }
+                        godot::builtin::VariantType::STRING => {
+                            name.to::<godot::prelude::GString>().to_string()
+                        }
+                        _ => continue,
+                    };
+                    if name_str == *prop_name {
                         exists = true;
                         break;
                     }
@@ -590,11 +605,20 @@ fn cross_scene_collect_changes(
         let prop_list = node.get_property_list();
         for i in 0..prop_list.len() {
             if let Some(entry) = prop_list.get(i) {
-                let name: String = entry
+                let name = entry
                     .get(&Variant::from("name"))
-                    .unwrap_or(Variant::nil())
-                    .to();
-                if name == property {
+                    .unwrap_or(Variant::nil());
+                // 兼容 StringName / String 两种属性名类型（Godot 4.7 为 StringName）
+                let name_str: String = match name.get_type() {
+                    godot::builtin::VariantType::STRING_NAME => {
+                        name.to::<godot::builtin::StringName>().to_string()
+                    }
+                    godot::builtin::VariantType::STRING => {
+                        name.to::<godot::prelude::GString>().to_string()
+                    }
+                    _ => continue,
+                };
+                if name_str == property {
                     affected.push(root.get_path_to(node).to_string());
                     break;
                 }

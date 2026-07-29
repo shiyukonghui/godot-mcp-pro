@@ -85,7 +85,10 @@ fn cmd_create_particles(args: &serde_json::Map<String, serde_json::Value>) -> Re
     if particle_var.is_nil() {
         return Err(McpError::internal(&format!("Failed to instantiate: {}", particle_type)));
     }
-    let mut particles: Gd<Node> = particle_var.to();
+    // 安全转换：验证类型继承 Node 再转换
+    let mut particles: Gd<Node> = particle_var.try_to().map_err(|_| {
+        McpError::invalid_params(&format!("类型 '{}' 不是 Node 的子类", particle_type))
+    })?;
     particles.set_name(node_name);
 
     // 创建默认的 ParticleProcessMaterial
@@ -117,9 +120,9 @@ fn cmd_set_particle_material(args: &serde_json::Map<String, serde_json::Value>) 
     let mat: Gd<ParticleProcessMaterial> = if current_mat.is_nil() {
         ParticleProcessMaterial::new_gd()
     } else {
-        // 克隆现有材质: Variant.call("duplicate") 返回 Variant, 需要 .to() 转为 Gd
+        // 克隆现有材质: Variant.call("duplicate") 返回 Variant, 使用 try_to 安全转换
         let dup = current_mat.call("duplicate", &[]);
-        let dup_gd: Gd<ParticleProcessMaterial> = dup.to();
+        let dup_gd: Gd<ParticleProcessMaterial> = dup.try_to().unwrap_or_else(|_| ParticleProcessMaterial::new_gd());
         dup_gd
     };
 
@@ -234,7 +237,7 @@ fn cmd_set_particle_color_gradient(args: &serde_json::Map<String, serde_json::Va
     } else {
         // 克隆现有材质
         let dup = current_mat.call("duplicate", &[]);
-        let dup_gd: Gd<ParticleProcessMaterial> = dup.to();
+        let dup_gd: Gd<ParticleProcessMaterial> = dup.try_to().unwrap_or_else(|_| ParticleProcessMaterial::new_gd());
         dup_gd
     };
     let mut mat = mat;

@@ -125,7 +125,7 @@ fn _collect_signal_recursive(
              if targets.size() > 0: \
                  emitted.append({{'signal': sig_name, 'targets': targets}}); \
          if emitted.size() > 0 or connected_to.size() > 0: \
-             return {{\"name\": str(node.get_name()), \"path\": node_path, \"type\": str(node.get_class()), \"signals_emitted\": emitted, \"signals_connected_to\": connected_to}}; \
+             return JSON.stringify({{\"name\": str(node.get_name()), \"path\": node_path, \"type\": str(node.get_class()), \"signals_emitted\": emitted, \"signals_connected_to\": connected_to}}); \
          return null",
         node.get_name().to_string()
     );
@@ -133,7 +133,10 @@ fn _collect_signal_recursive(
     if ex.parse(&code) == godot::global::Error::OK {
         let result = ex.execute();
         if !result.is_nil() {
-            let s: String = result.to();
+            let s = match result.try_to::<String>() {
+                Ok(s) => s,
+                Err(_) => result.stringify().to_string(),
+            };
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
                 out.push(parsed);
             }

@@ -1,11 +1,9 @@
 ﻿# Godot MCP RS 部署脚本
 # 构建 GDExtension DLL 并复制到 Godot 插件目录
 
-param(
-    [string]$Profile = "debug",
-    [string]$GodotProject = "F:\UE5\ly2",  # 目标 Godot 项目路径
-    [switch]$SkipBuild
-)
+$BuildProfile = if ($args -contains "-release") { "release" } else { "debug" }
+$GodotProject = "F:\UE5\ly2"
+$SkipBuild = $args -contains "-SkipBuild"
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -15,8 +13,8 @@ Write-Host "=== Godot MCP RS 构建部署 ===" -ForegroundColor Cyan
 
 # 1. 构建 GDExtension
 if (-not $SkipBuild) {
-    Write-Host "[1/4] 构建 godot_mcp_gdext ($Profile)..." -ForegroundColor Yellow
-    if ($Profile -eq "release") {
+    Write-Host "[1/4] 构建 godot_mcp_gdext ($BuildProfile)..." -ForegroundColor Yellow
+    if ($BuildProfile -eq "release") {
         cargo build --release -p godot_mcp_gdext
     } else {
         cargo build -p godot_mcp_gdext
@@ -27,7 +25,7 @@ if (-not $SkipBuild) {
 } else {
     Write-Host "[1/4] 跳过构建，使用现有产物" -ForegroundColor DarkYellow
 }
-$BuildDir = if ($Profile -eq "release") { "release" } else { "debug" }
+$BuildDir = if ($BuildProfile -eq "release") { "release" } else { "debug" }
 
 # 2. 复制 DLL 到 addons 目录
 Write-Host "[2/4] 同步仓库插件 DLL 到 $AddonDir ..." -ForegroundColor Yellow

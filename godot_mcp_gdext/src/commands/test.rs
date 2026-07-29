@@ -567,12 +567,15 @@ fn cmd_get_test_report(args: &serde_json::Map<String, serde_json::Value>) -> Res
     let report_code = "\
 var ei = EditorInterface \
 if ei == null: \
-    return {\"error\": \"No EditorInterface\"} \
-return {\"message\": \"使用 assert_node_state 等测试命令会自动收集结果。请查阅最近执行的测试命令输出。\", \"available_commands\": [\"assert_node_state\", \"assert_screen_text\", \"run_test_scenario\"]}";
+    return JSON.stringify({\"error\": \"No EditorInterface\"}) \
+return JSON.stringify({\"message\": \"使用 assert_node_state 等测试命令会自动收集结果。请查阅最近执行的测试命令输出。\", \"available_commands\": [\"assert_node_state\", \"assert_screen_text\", \"run_test_scenario\"]})";
 
     if expr.parse(report_code) == godot::global::Error::OK {
         let result = expr.execute();
-        let result_str: String = result.to();
+        let result_str = match result.try_to::<String>() {
+            Ok(s) => s,
+            Err(_) => result.stringify().to_string(),
+        };
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
             return Ok(parsed);
         }

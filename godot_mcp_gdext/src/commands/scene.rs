@@ -392,10 +392,22 @@ fn collect_exports_recursive(node: &Gd<godot::classes::Node>, root: &Gd<godot::c
                 continue;
             }
 
-            let prop_name = entry.get(&Variant::from("name")).unwrap_or(nil_var.clone()).to::<String>();
+            // 安全读取属性名：兼容 StringName / String（Godot 4.7 为 StringName）
+            let name_var = entry.get(&Variant::from("name")).unwrap_or(nil_var.clone());
+            let prop_name: String = match name_var.get_type() {
+                godot::builtin::VariantType::STRING_NAME => name_var.to::<godot::builtin::StringName>().to_string(),
+                godot::builtin::VariantType::STRING => name_var.to::<godot::prelude::GString>().to_string(),
+                _ => continue, // NIL 或非文本类型，跳过
+            };
             let prop_type = entry.get(&Variant::from("type")).unwrap_or(nil_var.clone()).to::<i64>();
             let hint = entry.get(&Variant::from("hint")).unwrap_or(nil_var.clone()).to::<i64>();
-            let hint_string = entry.get(&Variant::from("hint_string")).unwrap_or(nil_var.clone()).to::<String>();
+            // hint_string 可能为 NIL 或 StringName，安全读取
+            let hint_string_var = entry.get(&Variant::from("hint_string")).unwrap_or(nil_var.clone());
+            let hint_string: String = match hint_string_var.get_type() {
+                godot::builtin::VariantType::STRING_NAME => hint_string_var.to::<godot::builtin::StringName>().to_string(),
+                godot::builtin::VariantType::STRING => hint_string_var.to::<godot::prelude::GString>().to_string(),
+                _ => String::new(), // NIL 或其他类型，使用空字符串
+            };
 
             // 序列化属性值
             let val = node.get(&prop_name);
@@ -410,8 +422,15 @@ fn collect_exports_recursive(node: &Gd<godot::classes::Node>, root: &Gd<godot::c
         if !exports.is_empty() {
             // 将 Variant 转为 Gd<Script> 以访问脚本属性
             let script_gd: Gd<Script> = script_var.to();
-            // 获取脚本资源路径 (resource_path 继承自 Resource)
-            let script_path = script_gd.get("resource_path").to::<String>();
+            // 获取脚本资源路径 (resource_path 继承自 Resource，Godot 4.7 为 StringName)
+            let script_path = {
+                let rp = script_gd.get("resource_path");
+                match rp.get_type() {
+                    godot::builtin::VariantType::STRING_NAME => rp.to::<godot::builtin::StringName>().to_string(),
+                    godot::builtin::VariantType::STRING => rp.to::<godot::prelude::GString>().to_string(),
+                    _ => String::new(),
+                }
+            };
 
             // 计算节点路径 (通过 instance_id 比较判断是否为根节点)
             let is_root = node.instance_id() == root.instance_id();

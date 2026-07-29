@@ -175,7 +175,13 @@ fn cmd_add_node(args: &serde_json::Map<String, serde_json::Value>) -> Result<ser
         .ok_or_else(|| McpError::not_found(&format!("Parent '{}'", parent_path), ""))?;
 
     let node_var = ClassDb::singleton().instantiate(node_type);
-    let mut new_node: Gd<Node> = node_var.to();
+    if node_var.is_nil() {
+        return Err(McpError::invalid_params(&format!("无法实例化节点类型: {}", node_type)));
+    }
+    // 安全转换：使用 try_to 验证对象继承 Node
+    let mut new_node: Gd<Node> = node_var.try_to().map_err(|_| {
+        McpError::invalid_params(&format!("类型 '{}' 不是 Node 的子类", node_type))
+    })?;
 
     new_node.set_name(node_name);
 

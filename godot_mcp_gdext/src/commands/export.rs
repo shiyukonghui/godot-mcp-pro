@@ -58,10 +58,11 @@ fn cmd_list_export_presets(_: &serde_json::Map<String, serde_json::Value>) -> Re
     loop {
         let section = format!("preset.{}", idx);
         if cfg.has_section(&section) {
-            let name = cfg.get_value(&section, "name").to::<String>();
-            let platform = cfg.get_value(&section, "platform").to::<String>();
-            let runnable = cfg.get_value(&section, "runnable").to::<bool>();
-            let export_path = cfg.get_value(&section, "export_path").to::<String>();
+            // 安全读取配置值：缺失键可能返回 NIL，使用 try_to 避免 panic
+            let name = cfg.get_value(&section, "name").try_to::<String>().unwrap_or_default();
+            let platform = cfg.get_value(&section, "platform").try_to::<String>().unwrap_or_default();
+            let runnable = cfg.get_value(&section, "runnable").try_to::<bool>().unwrap_or(false);
+            let export_path = cfg.get_value(&section, "export_path").try_to::<String>().unwrap_or_default();
             presets.push(serde_json::json!({
                 "index": idx,
                 "name": name,
@@ -98,7 +99,7 @@ fn cmd_export_project(args: &serde_json::Map<String, serde_json::Value>) -> Resu
     loop {
         let section = format!("preset.{}", idx);
         if cfg.has_section(&section) {
-            let name = cfg.get_value(&section, "name").to::<String>();
+            let name = cfg.get_value(&section, "name").try_to::<String>().unwrap_or_default();
             if name == preset_name {
                 found = true;
                 break;

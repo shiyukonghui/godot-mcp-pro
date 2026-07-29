@@ -194,8 +194,10 @@ fn cmd_add_audio_bus_effect(args: &serde_json::Map<String, serde_json::Value>) -
         return Err(McpError::invalid_params(&format!("Unknown effect type: {}", effect_type)));
     }
 
-    // add_bus_effect 接收 Gd<AudioEffect>, 通过 Variant 转换
-    let effect_gd: Gd<godot::classes::AudioEffect> = effect_var.to();
+    // add_bus_effect 接收 Gd<AudioEffect>，使用 try_to 安全验证继承关系
+    let effect_gd: Gd<godot::classes::AudioEffect> = effect_var.try_to().map_err(|_| {
+        McpError::invalid_params(&format!("类型 '{}' 不是 AudioEffect 的子类", effect_type))
+    })?;
     audio.add_bus_effect(bus_index, &effect_gd);
 
     let effect_count = audio.get_bus_effect_count(bus_index);

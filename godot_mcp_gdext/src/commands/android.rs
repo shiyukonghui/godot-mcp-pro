@@ -45,10 +45,7 @@ var cmd = \"{}\" \
 var args = {} \
 var output = [] \
 var exit_code = OS.execute(cmd, args, output, true) \
-var stdout = \"\" \
-if output.size() > 0: \
-    stdout = str(output[0]) \
-return {{\"exit_code\": exit_code, \"stdout\": stdout}}",
+return JSON.stringify({{\"exit_code\": exit_code, \"stdout\": str(output[0]) if output.size() > 0 else \"\"}})",
         cmd.replace('\\', "\\\\").replace('"', "\\\""),
         args_json
     );
@@ -62,7 +59,10 @@ return {{\"exit_code\": exit_code, \"stdout\": stdout}}",
         return Err(McpError::internal("OS.execute 返回空"));
     }
 
-    let result_str: String = result.to();
+    let result_str = match result.try_to::<String>() {
+        Ok(s) => s,
+        Err(_) => result.stringify().to_string(),
+    };
     serde_json::from_str(&result_str)
         .map_err(|e| McpError::internal(&format!("解析命令执行结果失败: {}", e)))
 }
@@ -121,8 +121,9 @@ fn find_android_preset(preset_name: &str, preset_index: i64) -> Result<serde_jso
             break;
         }
 
-        let platform: String = cfg.get_value(&section, "platform").to();
-        let name: String = cfg.get_value(&section, "name").to();
+        // 安全读取配置值：缺失键可能返回 NIL
+        let platform: String = cfg.get_value(&section, "platform").try_to().unwrap_or_default();
+        let name: String = cfg.get_value(&section, "name").try_to().unwrap_or_default();
 
         let matches = if !preset_name.is_empty() {
             name == preset_name
@@ -136,7 +137,7 @@ fn find_android_preset(preset_name: &str, preset_index: i64) -> Result<serde_jso
         if matches {
             let options_section = format!("preset.{}.options", idx);
             let package_name: String = if cfg.has_section(&options_section) {
-                cfg.get_value(&options_section, "package/unique_name").to()
+                cfg.get_value(&options_section, "package/unique_name").try_to().unwrap_or_default()
             } else {
                 String::new()
             };
@@ -145,8 +146,8 @@ fn find_android_preset(preset_name: &str, preset_index: i64) -> Result<serde_jso
                 "index": idx,
                 "name": name,
                 "platform": platform,
-                "runnable": cfg.get_value(&section, "runnable").to::<bool>(),
-                "export_path": cfg.get_value(&section, "export_path").to::<String>(),
+                "runnable": cfg.get_value(&section, "runnable").try_to::<bool>().unwrap_or(false),
+                "export_path": cfg.get_value(&section, "export_path").try_to::<String>().unwrap_or_default(),
                 "package_name": package_name,
             }));
         }
@@ -179,7 +180,7 @@ return \"adb\"";
     }
 
     let adb_result = expr.execute();
-    let adb_path: String = adb_result.to();
+    let adb_path: String = adb_result.try_to().unwrap_or_else(|_| "adb".into());
 
     // 执行 adb devices -l
     let result = execute_os_command(&adb_path, &["devices", "-l"])?;
@@ -294,7 +295,7 @@ if not skip_export: \
     var export_exit = OS.execute(godot_bin, export_args, export_output, true) \
     steps.append({{\"step\": \"export\", \"exit_code\": export_exit}}) \
     if export_exit != 0: \
-        return {{\"error\": \"Godot 导出失败 (退出码 \" + str(export_exit) + \")\", \"steps\": steps}} \
+        return JSON.stringify({{\"error\": \"Godot 导出失败 (退出码 \" + str(export_exit) + \")\", \"steps\": steps}}) \
 \
 var install_args = [] \
 if not device_serial.is_empty(): \
@@ -307,7 +308,7 @@ var install_output = [] \
 var install_exit = OS.execute(adb, install_args, install_output, true) \
 steps.append({{\"step\": \"install\", \"exit_code\": install_exit}}) \
 if install_exit != 0: \
-    return {{\"error\": \"adb install 失败 (退出码 \" + str(install_exit) + \")\", \"steps\": steps}} \
+    return JSON.stringify({{\"error\": \"adb install 失败 (退出码 \" + str(install_exit) + \")\", \"steps\": steps}}) \
 \
 if launch: \
     var package_name = \"\" \
@@ -340,7 +341,7 @@ if launch: \
     else: \
         steps.append({{\"step\": \"launch\", \"skipped\": true, \"reason\": \"未找到 package_name\"}}) \
 \
-return {{\"result\": {{\"preset\": preset_name, \"apk_path\": export_path_abs, \"device\": device_serial if not device_serial.is_empty() else \"(default)\", \"steps\": steps}}}}",
+return JSON.stringify({{\"result\": {{\"preset\": preset_name, \"apk_path\": export_path_abs, \"device\": device_serial if not device_serial.is_empty() else \"(default)\", \"steps\": steps}}}})",
         preset_name.replace('"', "\\\""),
         device_id.replace('"', "\\\""),
         if debug { "true" } else { "false" },
@@ -354,7 +355,10 @@ return {{\"result\": {{\"preset\": preset_name, \"apk_path\": export_path_abs, \
     }
 
     let result = expr.execute();
-    let result_str: String = result.to();
+    let result_str = match result.try_to::<String>() {
+        Ok(s) => s,
+        Err(_) => result.stringify().to_string(),
+    };
 
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_str) {
         // 检查是否有错误

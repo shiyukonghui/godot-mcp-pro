@@ -1,6 +1,7 @@
 //! Shader 命令模块
 
 use std::collections::HashMap;
+use godot::builtin::{AnyArray, StringName};
 use godot::classes::file_access::ModeFlags;
 use godot::classes::{DirAccess, EditorInterface, FileAccess, ResourceLoader};
 use godot::prelude::*;
@@ -157,16 +158,32 @@ fn cmd_get_shader_params(args: &serde_json::Map<String, serde_json::Value>) -> R
     let mut expr = godot::classes::Expression::new_gd();
     if expr.parse(&code) == godot::global::Error::OK {
         let result = expr.execute();
-        let arr = result.to::<godot::builtin::VarArray>();
-        for i in 0..arr.len() {
-            if let Some(entry) = arr.get(i) {
-                let dict: godot::builtin::Dictionary<godot::builtin::Variant, godot::builtin::Variant> = entry.to();
-                if let Some(dict_entry) = dict.get("name") {
-                    let name = dict_entry.to::<String>();
-                    if let Some(type_entry) = dict.get("type") {
-                        let val = type_entry.to::<String>();
-                        params.insert(name, serde_json::Value::String(val));
+        // Expression 可能返回 NIL（无参数或执行错误），按 AnyArray 安全读取
+        if result.get_type() == godot::builtin::VariantType::ARRAY {
+            let arr = result.to::<AnyArray>();
+            for i in 0..arr.len() {
+                if let Some(entry) = arr.get(i) {
+                    if entry.get_type() != godot::builtin::VariantType::DICTIONARY {
+                        continue;
                     }
+                    let dict: godot::builtin::Dictionary<godot::builtin::Variant, godot::builtin::Variant> = entry.to();
+                    // 名称：兼容 StringName / String
+                    let name = if let Some(name_v) = dict.get("name") {
+                        match name_v.get_type() {
+                            godot::builtin::VariantType::STRING_NAME => name_v.to::<StringName>().to_string(),
+                            godot::builtin::VariantType::STRING => name_v.to::<GString>().to_string(),
+                            _ => continue,
+                        }
+                    } else {
+                        continue;
+                    };
+                    // 类型字段实际是整数 VariantType 枚举值，安全序列化为字符串
+                    let val = if let Some(type_v) = dict.get("type") {
+                        crate::utils::serialize::serialize_variant(&type_v).to_string()
+                    } else {
+                        "unknown".to_string()
+                    };
+                    params.insert(name, serde_json::Value::String(val));
                 }
             }
         }

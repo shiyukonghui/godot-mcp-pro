@@ -236,7 +236,12 @@ fn cmd_execute_editor_script(args: &serde_json::Map<String, serde_json::Value>) 
     }
 
     let result = expr.execute();
-    let output_str = if result.is_nil() { "null".to_string() } else { result.to::<String>() };
+    let output_str = if result.is_nil() {
+        "null".to_string()
+    } else {
+        // 安全序列化任意 Variant 类型，避免强制转换为 String 导致 panic
+        crate::utils::serialize::serialize_variant(&result).to_string()
+    };
 
     Ok(serde_json::json!({
         "output": [output_str],
